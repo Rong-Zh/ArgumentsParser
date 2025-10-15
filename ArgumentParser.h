@@ -72,8 +72,9 @@ std::string into_string<bool>(const bool &value)
 
 class File
 {
-public:
+private:
     std::string path;
+public: 
     File() : path("") {}
     File(const std::string &p) : path(p) {}
     bool exists() const
@@ -212,9 +213,9 @@ private:
     T value;
 
 public:
-    Expected() : value(), is_explicit(false) {}
-    Expected(const T &v) : value(v), is_explicit(true) {}
-    Expected(const char *v) : value(v), is_explicit(true) {}
+    Expected() : is_explicit(false), value() {}
+    Expected(const T &v) : is_explicit(true), value(v) {}
+    Expected(const char *v) : is_explicit(true), value(v) {}
     bool has_value() const { return is_explicit; }
     T get() const { return value; }
 };
@@ -266,7 +267,7 @@ inline std::string type_name(const std::type_info &t)
     if (t == typeid(File))
         return "file";
     return t.name();
-}
+};
 
 template <typename T>
 class Argument<T, void> : public ArgumentBase
@@ -310,6 +311,9 @@ public:
         const std::string &help,
         const Expected<T> &expected = Expected<T>())
     {
+        // Allow optional arguments without default values
+        // Users should check with exists() before calling get()
+        /*
         if (type == ArgType::Optional && !expected.has_value())
         {
             std::string msg = "Optional arguments '";
@@ -320,6 +324,7 @@ public:
             msg += "--" + long_opt + "' must have a non-default value.";
             throw std::runtime_error(msg);
         }
+        */
         auto arg = Arg::argument(expected.get());
         add_argument_impl(std::move(arg), short_opt, long_opt, type, help, expected);
     }
@@ -338,6 +343,9 @@ public:
         {
             throw std::runtime_error("Long option cannot be empty.");
         }
+        // Allow optional arguments without default values
+        // Users should check with exists() before calling get()
+        /*
         if (type == ArgType::Optional && !expected.has_value())
         {
             std::string msg = "Optional arguments '";
@@ -348,6 +356,7 @@ public:
             msg += "--" + long_opt + "' must have a non-default value.";
             throw std::runtime_error(msg);
         }
+        */
         if (!constraint.check(expected.get()))
         {
             throw std::runtime_error(
@@ -384,9 +393,21 @@ public:
     }
 
     template <typename T>
+    void add_optional(const char short_opt, const std::string &long_opt, const std::string &help)
+    {
+        add_argument<T>(short_opt, long_opt, ArgType::Optional, help, Expected<T>());
+    }
+
+    template <typename T>
     void add_optional(const std::string &long_opt, const std::string &help, const Expected<T> &expected)
     {
         add_argument<T>('\0', long_opt, ArgType::Optional, help, expected);
+    }
+
+    template <typename T>
+    void add_optional(const std::string &long_opt, const std::string &help)
+    {
+        add_argument<T>('\0', long_opt, ArgType::Optional, help, Expected<T>());
     }
 
     template <typename T, typename U>
