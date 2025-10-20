@@ -72,8 +72,9 @@ std::string into_string<bool>(const bool &value)
 
 class File
 {
-public:
+private:
     std::string path;
+public: 
     File() : path("") {}
     File(const std::string &p) : path(p) {}
     bool exists() const
@@ -87,7 +88,7 @@ public:
 template <>
 std::string into_string<File>(const File &value)
 {
-    return "file";
+    return std::string(value);
 }
 
 template <typename T>
@@ -193,9 +194,9 @@ private:
     T value;
 
 public:
-    Expected() : value(), is_explicit(false) {}
-    Expected(const T &v) : value(v), is_explicit(true) {}
-    Expected(const char *v) : value(v), is_explicit(true) {}
+    Expected() : is_explicit(false), value() {}
+    Expected(const T &v) : is_explicit(true), value(v) {}
+    Expected(const char *v) : is_explicit(true), value(v) {}
     bool has_value() const { return is_explicit; }
     T get() const { return value; }
 };
@@ -476,7 +477,7 @@ protected:
         {
             std::unique_ptr<Argument<T>> arg(new Argument<T>());
             arg->value = expected;
-            return std::move(arg);
+            return arg;
         }
 
         template <typename T, typename U>
@@ -485,7 +486,7 @@ protected:
             std::unique_ptr<Argument<T, U>> arg(new Argument<T, U>());
             arg->value = expected;
             arg->constraint = constraint;
-            return std::move(arg);
+            return arg;
         }
     };
 
@@ -528,16 +529,6 @@ protected:
         const std::string &help,
         const Expected<T> &expected = Expected<T>())
     {
-        if (type == ArgType::Optional && !expected.has_value())
-        {
-            std::string msg = "Optional arguments '";
-            if (short_opt != '\0')
-            {
-                msg += "-" + std::string(1, short_opt) + ", ";
-            }
-            msg += "--" + long_opt + "' must have a non-default value.";
-            throw std::runtime_error(msg);
-        }
         auto arg = Arg::argument(expected.get());
         add_argument_impl(std::move(arg), short_opt, long_opt, type, help, expected);
     }
@@ -554,16 +545,6 @@ protected:
         if (long_opt.empty())
         {
             throw std::runtime_error("Long option cannot be empty.");
-        }
-        if (type == ArgType::Optional && !expected.has_value())
-        {
-            std::string msg = "Optional arguments '";
-            if (short_opt != '\0')
-            {
-                msg += "-" + std::string(1, short_opt) + ", ";
-            }
-            msg += "--" + long_opt + "' must have a non-default value.";
-            throw std::runtime_error(msg);
         }
         if (!constraint.check(expected.get()))
         {
@@ -612,7 +593,7 @@ public:
 
     void parse_args(int argc, char *argv[])
     {
-        ready_to_execute_ = false; // 重置执行标志
+        ready_to_execute_ = false; // reset flag
 
         if (argc < 2)
         {
@@ -774,7 +755,7 @@ private:
             {
                 std::cout << "  ";
 
-                // 选项名称
+                // option name
                 std::string opt_str;
                 if (arg->short_opt != '\0')
                 {
@@ -786,16 +767,13 @@ private:
                 }
                 std::cout << std::setw(opt_w) << std::left << opt_str << "    ";
 
-                // 类型
                 std::string type_str = (arg->arg_type == ArgType::Flag) ? "flag" : type_name(arg->get_type());
                 std::cout << std::setw(type_w) << std::left << type_str << "    ";
 
-                // 帮助信息
                 if (arg->deprecated)
                     std::cout << "[Deprecated] ";
                 std::cout << arg->help;
 
-                // 默认值
                 if (arg->is_set && arg->arg_type != ArgType::Flag)
                     std::cout << " (default: " << arg->to_string() << ")";
 

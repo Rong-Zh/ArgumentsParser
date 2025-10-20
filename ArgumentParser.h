@@ -88,7 +88,7 @@ public:
 template <>
 std::string into_string<File>(const File &value)
 {
-    return "file";
+    return std::string(value);
 }
 
 template <typename T>
@@ -792,7 +792,7 @@ private:
         {
             std::unique_ptr<Argument<T>> arg(new Argument<T>());
             arg->value = expected;
-            return std::move(arg);
+            return arg;
         }
 
         template <typename T, typename U>
@@ -801,7 +801,7 @@ private:
             std::unique_ptr<Argument<T, U>> arg(new Argument<T, U>());
             arg->value = expected;
             arg->constraint = constraint;
-            return std::move(arg);
+            return arg;
         }
     };
 
