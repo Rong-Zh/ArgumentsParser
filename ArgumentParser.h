@@ -486,7 +486,7 @@ public:
         if (argc < 2)
         {
             print_help();
-            return;
+            std::exit(EXIT_SUCCESS);
         }
         std::vector<std::string> positional_values;
         for (int i = 1; i < argc; i++)

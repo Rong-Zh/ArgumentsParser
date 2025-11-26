@@ -598,7 +598,7 @@ public:
         if (argc < 2)
         {
             print_help();
-            return;
+            std::exit(EXIT_SUCCESS);
         }
 
         std::string subcmd_name = argv[1];
