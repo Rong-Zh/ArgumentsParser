@@ -74,7 +74,8 @@ class File
 {
 private:
     std::string path;
-public: 
+
+public:
     File() : path("") {}
     File(const std::string &p) : path(p) {}
     bool exists() const
@@ -547,10 +548,10 @@ public:
                             break;
                         }
                     }
-                    
+
                     if (!first_argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + first_opt);
-                    
+
                     // if the first argument is not a flag,  value is after argument
                     if (first_argument->arg_type != ArgType::Flag)
                     {

@@ -74,7 +74,8 @@ class File
 {
 private:
     std::string path;
-public: 
+
+public:
     File() : path("") {}
     File(const std::string &p) : path(p) {}
     bool exists() const
