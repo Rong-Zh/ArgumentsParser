@@ -486,8 +486,24 @@ public:
     {
         if (argc < 2)
         {
-            print_help();
-            std::exit(EXIT_SUCCESS);
+            // Check if there are any required arguments
+            bool has_required = false;
+            for (const auto &pair : arguments_)
+            {
+                if (pair.second->required && pair.second->arg_type != ArgType::Positional)
+                {
+                    has_required = true;
+                    break;
+                }
+            }
+            
+            if (has_required)
+            {
+                // Has required arguments, show help and exit
+                print_help();
+                std::exit(EXIT_SUCCESS);
+            }
+            // Otherwise continue with default values
         }
         std::vector<std::string> positional_values;
         for (int i = 1; i < argc; i++)

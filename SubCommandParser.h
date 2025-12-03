@@ -610,14 +610,31 @@ public:
         }
         current_command = subcmd_name;
 
-        if (argc >= 3)
+        // Check if all arguments are optional
+        auto &cmd = commands_[subcmd_name];
+        ArgumentOptions &parser = *cmd->parser;
+        const auto &arguments = parser.get_arguments();
+        
+        bool has_required = false;
+        for (const auto &pair : arguments)
         {
-            parse_args(current_command, argc - 1, argv + 1);
-            ready_to_execute_ = true;
+            if (pair.second->required && pair.second->arg_type != ArgType::Positional)
+            {
+                has_required = true;
+                break;
+            }
+        }
+        
+        if (has_required && argc < 3)
+        {
+            // Has required arguments but no arguments provided, show help
+            print_subcommand_help(current_command);
         }
         else
         {
-            print_subcommand_help(current_command);
+            // Either has arguments or all arguments are optional, execute
+            parse_args(current_command, argc - 1, argv + 1);
+            ready_to_execute_ = true;
         }
     }
 
