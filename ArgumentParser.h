@@ -484,6 +484,23 @@ public:
 
     void parse_args(int argc, char *argv[])
     {
+        // Check for help flag if enabled
+        if (helparg_)
+        {
+            ArgumentBase *args = arguments_.at(*helparg_).get();
+            std::string short_opt = "-" + args->short_opt;
+            std::string long_opt = "--" + args->long_opt;
+            for (int i = 1; i < argc; i++)
+            {
+                std::string arg = argv[i];
+                if (arg == short_opt || arg == long_opt)
+                {
+                    print_help();
+                    std::exit(EXIT_SUCCESS);
+                }
+            }
+        }
+
         if (argc < 2)
         {
             // Check if there are any required arguments
@@ -496,7 +513,7 @@ public:
                     break;
                 }
             }
-            
+
             if (has_required)
             {
                 // Has required arguments, show help and exit
@@ -652,7 +669,7 @@ public:
         }
     }
 
-    void print_help() const
+    void print_help()
     {
         std::cout << programname_ << ": " << description_ << "\n"
                   << "Version:" << version_ << "\n"
@@ -759,9 +776,16 @@ public:
         note_ = note;
     }
 
-private:
-    void print_help(const std::string &title, bool required_flag) const
+    void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
     {
+        add_flag(short_opt, long_opt, help);
+        helparg_ = std::unique_ptr<std::string>(new std::string(long_opt));
+    }
+
+private:
+    void print_help(const std::string &title, bool required_flag)
+    {
+        // Calculate widths
         size_t opt_w = 0, type_w = 0;
         bool has_args = false;
         for (const auto &name : order_)
@@ -777,6 +801,14 @@ private:
         if (!has_args)
             return;
         std::cout << title << ":\n";
+        // Move help argument to the end
+        if (helparg_)
+        {
+            auto it = std::find(order_.begin(), order_.end(), *helparg_);
+            if (it != order_.end())
+                std::rotate(it, it + 1, order_.end());
+        }
+        // Print arguments
         for (const auto &name : order_)
         {
             const ArgumentBase *arg = arguments_.at(name).get();
@@ -857,6 +889,7 @@ private:
     std::string description_;
     std::string version_;
     std::string note_;
+    std::unique_ptr<std::string> helparg_;
     std::unordered_map<std::string, std::unique_ptr<ArgumentBase>> arguments_;
     std::vector<std::string> order_;
     std::vector<std::string> positionals_;

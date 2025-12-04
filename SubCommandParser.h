@@ -469,6 +469,12 @@ public:
 
     void footnote(const std::string &note) { note_ = note; }
 
+    void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
+    {
+        add_flag(short_opt, long_opt, help);
+        helparg_ = std::unique_ptr<std::string>(new std::string(long_opt));
+    }
+
 protected:
     class Arg
     {
@@ -562,6 +568,7 @@ protected:
     std::string description_;
     std::string version_;
     std::string note_;
+    std::unique_ptr<std::string> helparg_;
     std::unordered_map<std::string, std::unique_ptr<Option>> arguments_;
     std::vector<std::string> order_;
     std::vector<std::string> positionals_;
@@ -614,7 +621,7 @@ public:
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
         const auto &arguments = parser.get_arguments();
-        
+
         bool has_required = false;
         for (const auto &pair : arguments)
         {
@@ -624,7 +631,7 @@ public:
                 break;
             }
         }
-        
+
         if (has_required && argc < 3)
         {
             // Has required arguments but no arguments provided, show help
@@ -803,17 +810,6 @@ private:
 
     void parse_args(std::string subcmd_name, int argc, char *argv[])
     {
-        // Check for help flag first
-        for (int i = 1; i < argc; i++)
-        {
-            std::string arg = argv[i];
-            if (arg == "-h" || arg == "--help")
-            {
-                print_subcommand_help(subcmd_name);
-                std::exit(EXIT_SUCCESS);
-            }
-        }
-        
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
         std::vector<std::string> positional_values;

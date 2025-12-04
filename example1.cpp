@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
 {
     ArgumentParser parser("complex_demo", "复杂参数解析测试");
     parser.set_version("1.0.0");
-        // 1. 字符串参数，直接用 const char*（测试 Default<std::string>(const char*) 构造）
+    // 1. 字符串参数，直接用 const char*（测试 Default<std::string>(const char*) 构造）
     parser.add_argument<std::string>(
         's', "str", ArgType::Optional, "字符串参数", "hello");
 
@@ -45,9 +45,12 @@ int main(int argc, char *argv[])
     parser.add_optional<double>('m', "discount", "折扣", 0.7);
     parser.add_optional<double>("name", "折扣", 0.0);
     // flag参数
+    // 添加 help 参数（随机位置）
+    parser.add_help('h', "niuma", "显示帮助信息");
+
     parser.add_flag('v', "verbose", "显示详细信息");
     parser.add_flag('x', "xvalue", "使用x");
-    
+
     parser.add_flag('y', "yvalue", "使用y");
 
     parser.add_flag("quiet", "静默模式");
@@ -57,12 +60,11 @@ int main(int argc, char *argv[])
 
     parser.footnote("Maintainer: RongZh, Email: xxxxxxxxxx@google.com");
 
-    //bool flag = parser.deprecate("verbose");
-    // if (flag)
-    // {
-    //     std::cout << "The 'verbose' flag is deprecated." << std::endl;
-    // }
-    parser.print_help();
+    // bool flag = parser.deprecate("verbose");
+    //  if (flag)
+    //  {
+    //      std::cout << "The 'verbose' flag is deprecated." << std::endl;
+    //  }
     parser.parse_args(argc, argv);
 
     // 获取所有参数的值
