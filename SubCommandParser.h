@@ -803,6 +803,17 @@ private:
 
     void parse_args(std::string subcmd_name, int argc, char *argv[])
     {
+        // Check for help flag first
+        for (int i = 1; i < argc; i++)
+        {
+            std::string arg = argv[i];
+            if (arg == "-h" || arg == "--help")
+            {
+                print_subcommand_help(subcmd_name);
+                std::exit(EXIT_SUCCESS);
+            }
+        }
+        
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
         std::vector<std::string> positional_values;
