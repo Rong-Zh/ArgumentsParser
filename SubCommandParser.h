@@ -615,16 +615,44 @@ public:
 
     void parse_args(int argc, char *argv[])
     {
+        if (programname_.empty())
+            programname_ = argv[0];
         if (argc < 2)
         {
             print_help();
             std::exit(EXIT_SUCCESS);
         }
+        for (int i = 1; i < argc; ++i)
+        {
+            std::string a = argv[i];
+            if (a == "--help" || a == "-h")
+            {
+                print_help();
+                std::exit(EXIT_SUCCESS);
+            }
+        }
         std::string subcmd_name = argv[1];
+        if (subcmd_name == "help")
+        {
+            if (argc >= 3)
+            {
+                std::string subcmd = argv[2];
+                if (commands_.find(subcmd) == commands_.end())
+                {
+                    throw std::runtime_error("Unknown subcommand: " + subcmd + "\n");
+                }
+                print_subcommand_help(subcmd);
+            }
+            else
+            {
+                print_help();
+            }
+            std::exit(EXIT_SUCCESS);
+        }
+
         if (commands_.find(subcmd_name) == commands_.end())
         {
-            print_help();
-            throw std::runtime_error("Unknown subcommand: " + subcmd_name);
+            throw std::runtime_error("Unknown subcommand: " + subcmd_name + "\n");
         }
         // Check if all arguments are optional
         auto &cmd = commands_[subcmd_name];
@@ -672,8 +700,9 @@ public:
         std::cout << "\n";
         if (!note_.empty())
         {
-            std::cout << note_ << "\n\n";
+            std::cout << note_ << "\n";
         }
+        std::cout << "See '" + programname_ + " help <command>' to read about a specific subcommand.\n";
     }
 
     void print_subcommand_help(const std::string &subcmd_name)

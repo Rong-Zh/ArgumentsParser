@@ -39,7 +39,7 @@ int subtract_main(ArgumentOptions &parser)
 int main(int argc, char *argv[])
 {
     SubCommandParser cmd("calc", "A simple calculator with subcommands");
-
+    cmd.set_version("1.0.0");
     // push add subcommand
     auto &add_parser = cmd.add_subcommand("add", "Add two numbers", add_main);
     add_parser.add_required<int>('a', "first", "First number");

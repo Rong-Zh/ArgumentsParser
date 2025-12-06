@@ -488,6 +488,8 @@ public:
 
     void parse_args(int argc, char *argv[])
     {
+        if (programname_.empty())
+            programname_ = argv[0];
         // Check for help flag if enabled
         ArgumentBase *args = get_helparg();
         if (args)
