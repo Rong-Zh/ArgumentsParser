@@ -10,40 +10,48 @@
 #include "SubCommandParser.h"
 #include <iostream>
 
-int add(ArgumentOptions &parser)
+int add(int x, int y)
 {
-    int a = parser.get<int>("first");
-    int b = parser.get<int>("second");
-    return a + b;
+    return x + y;
 }
 
-int subtract(ArgumentOptions &parser)
+int subtract(int x, int y)
+{
+    return x - y;
+}
+
+int add_main(ArgumentOptions &parser)
 {
     int a = parser.get<int>("first");
     int b = parser.get<int>("second");
-    return a - b;
+    std::cout << "Result: " << add(a, b) << std::endl;
+    return 0;
+}
+
+int subtract_main(ArgumentOptions &parser)
+{
+    int a = parser.get<int>("first");
+    int b = parser.get<int>("second");
+    std::cout << "Result: " << subtract(a, b) << std::endl;
+    return 0;
 }
 
 int main(int argc, char *argv[])
 {
     SubCommandParser cmd("calc", "A simple calculator with subcommands");
 
-    // 添加 add 子命令
-    auto &add_parser = cmd.add_subcommand("add", "Add two numbers", add);
+    // push add subcommand
+    auto &add_parser = cmd.add_subcommand("add", "Add two numbers", add_main);
     add_parser.add_required<int>('a', "first", "First number");
     add_parser.add_required<int>('b', "second", "Second number");
+    add_parser.add_help('h', "help", "Show help message");
 
-    // 添加 subtract 子命令
-    auto &sub_parser = cmd.add_subcommand("subtract", "Subtract two numbers", subtract);
+    // push subtract subcommand
+    auto &sub_parser = cmd.add_subcommand("subtract", "Subtract two numbers", subtract_main);
     sub_parser.add_required<int>('a', "first", "First number");
     sub_parser.add_required<int>('b', "second", "Second number");
-    // 解析命令行参数
+    // parse command line arguments
     cmd.parse_args(argc, argv);
 
-    int result;
-    if (cmd.execute(result))
-    {
-        std::cout << "Result: " << result << std::endl;
-    }    
-    return 0;
+    return cmd.execute();
 }

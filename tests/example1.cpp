@@ -11,52 +11,50 @@
 
 int main(int argc, char *argv[])
 {
-    ArgumentParser parser("complex_demo", "复杂参数解析测试");
+    ArgumentParser parser("complex_demo", "Complex argument parsing test");
     parser.set_version("1.0.0");
-    // 1. 字符串参数，直接用 const char*（测试 Default<std::string>(const char*) 构造）
+    // 1. String argument, using const char* (test Default<std::string>(const char*) constructor)
     parser.add_argument<std::string>(
-        's', "str", ArgType::Optional, "字符串参数", "hello");
+        's', "str", ArgType::Optional, "String argument", "hello");
 
-    // 2. 字符串参数，显式 Default<std::string>
+    // 2. String argument, explicit Default<std::string>
     parser.add_argument<std::string>(
-        't', "text", ArgType::Optional, "文本参数", "world");
+        't', "text", ArgType::Optional, "Text argument", "world");
 
-    // 3. int 参数，默认值为 0
+    // 3. int argument, default 0
     parser.add_argument<int>(
-        'i', "int", ArgType::Optional, "整数参数", 0);
+        'i', "int", ArgType::Optional, "Integer argument", 0);
 
-    // 4. double 参数，默认值为 0.5
+    // 4. double argument, default 0.5
     parser.add_argument<double>(
-        'd', "dbl", ArgType::Optional, "浮点参数", 0.5);
+        'd', "dbl", ArgType::Optional, "Floating-point argument", 0.5);
 
-    // 5. bool 参数，默认值为 true
+    // 5. bool argument, default false
     parser.add_argument<bool>(
-        'b', "bool", ArgType::Optional, "布尔参数", false);
+        'b', "bool", ArgType::Optional, "Boolean argument", false);
 
-    // 必需参数
-    parser.add_required<int>("number", "输入一个整数");
-    // 可选参数，带范围约束
+    // Required argument (commented out)
+    // parser.add_required<int>("number", "Enter an integer");
+    // Optional argument with range constraint
     parser.add_argument<int, Range<int>>(
-        'a', "age", ArgType::Optional, "年龄(18~99)", 20, {18, 88});
-    // 可选参数，choices约束
+        'a', "age", ArgType::Optional, "Age (18~99)", 20, {18, 88});
+    // Optional argument with choices constraint
     parser.add_argument<std::string, Choices<std::string>>(
-        'c', "color", ArgType::Optional, "颜色", "red", Choices<std::string>{{"red", "green", "blue"}});
-    // double类型参数
-    parser.add_optional<double>('m', "discount", "折扣", 0.7);
-    parser.add_optional<double>("name", "折扣", 0.0);
-    // flag参数
-    // 添加 help 参数（随机位置）
-    parser.add_help('h', "niuma", "显示帮助信息");
+        'c', "color", ArgType::Optional, "Color", "red", Choices<std::string>{{"red", "green", "blue"}});
+    // double type argument
+    parser.add_optional<double>('m', "discount", "Discount", 0.7);
+    parser.add_optional<double>("name", "Discount", 0.0);
+    // flag argument
+    // Add help argument (at arbitrary position)
+    parser.add_help('\0', "niuma", "Show help message");
 
-    parser.add_flag('v', "verbose", "显示详细信息");
-    parser.add_flag('x', "xvalue", "使用x");
-
-    parser.add_flag('y', "yvalue", "使用y");
-
-    parser.add_flag("quiet", "静默模式");
-    // 位置参数
-    parser.add_positional<std::string>("input", "输入文件名");
-    parser.add_positional<std::string>("output", "输出文件名");
+    parser.add_flag('v', "verbose", "Show verbose output");
+    parser.add_flag('x', "xvalue", "Use x");
+    parser.add_flag('y', "yvalue", "Use y");
+    parser.add_flag("quiet", "Quiet mode");
+    // Positional arguments
+    parser.add_positional<std::string>("input", "Input filename");
+    parser.add_positional<std::string>("output", "Output filename");
 
     parser.footnote("Maintainer: RongZh, Email: xxxxxxxxxx@google.com");
 
@@ -67,7 +65,7 @@ int main(int argc, char *argv[])
     //  }
     parser.parse_args(argc, argv);
 
-    // 获取所有参数的值
+    // Retrieve all argument values
     int number = parser.get<int>("number");
     int age = parser.get<int>("age");
     std::string color = parser.get<std::string>("color");
@@ -85,7 +83,7 @@ int main(int argc, char *argv[])
     bool xvalue = parser.get<bool>("xvalue");
     bool yvalue = parser.get<bool>("yvalue");
 
-    std::cout << "------------------- 解析结果 -------------------" << std::endl;
+    std::cout << "------------------- Parse Results -------------------" << std::endl;
     std::cout << "number   : " << number << std::endl;
     std::cout << "age      : " << age << std::endl;
     std::cout << "color    : " << color << std::endl;

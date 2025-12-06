@@ -230,6 +230,7 @@ public:
     bool required = false;
     bool is_set = false;
     bool deprecated = false;
+    bool is_helparg = false;
 
     virtual std::string to_string() const = 0;
     virtual void from_string(const std::string &value) = 0;
@@ -298,6 +299,8 @@ public:
 
 class ArgumentOptions
 {
+    friend class SubCommandParser;
+
 public:
     ArgumentOptions() {}
     ArgumentOptions(const std::string &programname, const std::string &description)
@@ -353,6 +356,11 @@ public:
     void add_flag(const std::string &long_opt, const std::string &help)
     {
         add_argument<bool>('\0', long_opt, ArgType::Flag, help, Expected<bool>());
+    }
+
+    void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
+    {
+        add_argument_impl(Arg::argument(Expected<bool>().get()), short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), true);
     }
 
     template <typename T>
@@ -430,19 +438,6 @@ public:
     void set_version(const std::string &version) { version_ = version; }
     std::string get_version() const { return version_; }
 
-    const std::vector<std::string> &get_order() const { return order_; }
-    const std::vector<std::string> &get_positionals() const { return positionals_; }
-
-    const std::unordered_map<std::string, std::unique_ptr<Option>> &get_arguments() const
-    {
-        return arguments_;
-    }
-
-    std::unordered_map<std::string, std::unique_ptr<Option>> &get_arguments()
-    {
-        return arguments_;
-    }
-
     bool deprecate(const std::string &long_opt)
     {
         auto it = arguments_.find(long_opt);
@@ -469,13 +464,32 @@ public:
 
     void footnote(const std::string &note) { note_ = note; }
 
-    void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
+protected:
+    bool has_required() const
     {
-        add_flag(short_opt, long_opt, help);
-        helparg_ = std::unique_ptr<std::string>(new std::string(long_opt));
+        for (const auto &pair : arguments_)
+        {
+            if (pair.second->required)
+                return true;
+        }
+        return false;
     }
 
-protected:
+    bool has_helparg()
+    {
+        return get_helparg() != nullptr;
+    }
+
+    Option *get_helparg()
+    {
+        for (const auto &pair : arguments_)
+        {
+            if (pair.second->is_helparg)
+                return pair.second.get();
+        }
+        return nullptr;
+    }
+
     class Arg
     {
     public:
@@ -504,7 +518,8 @@ protected:
         const std::string &long_opt,
         ArgType type,
         const std::string &help,
-        const Expected<T> &expected)
+        const Expected<T> &expected,
+        bool is_helparg = false)
     {
         if (exists(short_opt))
         {
@@ -520,6 +535,7 @@ protected:
         arg->arg_type = type;
         arg->required = (type == ArgType::Required);
         arg->is_set = expected.has_value();
+        arg->is_helparg = is_helparg;
         if (type == ArgType::Positional)
         {
             positionals_.push_back(long_opt);
@@ -536,8 +552,7 @@ protected:
         const std::string &help,
         const Expected<T> &expected = Expected<T>())
     {
-        auto arg = Arg::argument(expected.get());
-        add_argument_impl(std::move(arg), short_opt, long_opt, type, help, expected);
+        add_argument_impl(Arg::argument(expected.get()), short_opt, long_opt, type, help, expected);
     }
 
     template <typename T, typename U>
@@ -560,15 +575,13 @@ protected:
                 "', value: " + into_string(expected.get()) +
                 " does not satisfy constraint: " + constraint.desc());
         }
-        auto arg = Arg::argument(expected.get(), constraint);
-        add_argument_impl(std::move(arg), short_opt, long_opt, type, help + constraint.desc(), expected);
+        add_argument_impl(Arg::argument(expected.get(), constraint), short_opt, long_opt, type, help + constraint.desc(), expected);
     }
 
     std::string programname_;
     std::string description_;
     std::string version_;
     std::string note_;
-    std::unique_ptr<std::string> helparg_;
     std::unordered_map<std::string, std::unique_ptr<Option>> arguments_;
     std::vector<std::string> order_;
     std::vector<std::string> positionals_;
@@ -588,7 +601,8 @@ public:
             throw std::runtime_error("Command name cannot be empty.");
         if (commands_.find(name) != commands_.end())
             throw std::runtime_error("Command '" + name + "' already exists.");
-
+        if (!callable) // Check for empty std::function
+            throw std::runtime_error("Callable function cannot be empty.");
         std::unique_ptr<Command> cmd(new Command(
             std::move(callable),
             std::unique_ptr<ArgumentOptions>(new ArgumentOptions(name, description))));
@@ -601,63 +615,36 @@ public:
 
     void parse_args(int argc, char *argv[])
     {
-        ready_to_execute_ = false; // reset flag
-
         if (argc < 2)
         {
             print_help();
             std::exit(EXIT_SUCCESS);
         }
-
         std::string subcmd_name = argv[1];
         if (commands_.find(subcmd_name) == commands_.end())
         {
             print_help();
             throw std::runtime_error("Unknown subcommand: " + subcmd_name);
         }
-        current_command = subcmd_name;
-
         // Check if all arguments are optional
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
-        const auto &arguments = parser.get_arguments();
-
-        bool has_required = false;
-        for (const auto &pair : arguments)
-        {
-            if (pair.second->required && pair.second->arg_type != ArgType::Positional)
-            {
-                has_required = true;
-                break;
-            }
-        }
-
-        if (has_required && argc < 3)
+        if (parser.has_required() && argc < 3)
         {
             // Has required arguments but no arguments provided, show help
-            print_subcommand_help(current_command);
+            print_subcommand_help(subcmd_name);
+            std::exit(EXIT_SUCCESS);
         }
-        else
-        {
-            // Either has arguments or all arguments are optional, execute
-            parse_args(current_command, argc - 1, argv + 1);
-            ready_to_execute_ = true;
-        }
+        parse_args(subcmd_name, argc - 1, argv + 1);
+        current_command = std::unique_ptr<std::string>(new std::string(subcmd_name));
     }
 
-    template <typename R>
-    bool execute(R &result)
+    int execute()
     {
-        if (!ready_to_execute_ || commands_.empty() || current_command.empty())
-            return false;
-
-        auto &cmd = commands_[current_command];
-        if (cmd->callable)
-        {
-            result = cmd->callable(*cmd->parser);
-            return true;
-        }
-        return false;
+        if (!current_command)
+            throw std::runtime_error("Error: No command selected (did you call parse_args?)");
+        auto &cmd = commands_[*current_command];
+        return cmd->callable(*cmd->parser);
     }
 
     void print_help() const
@@ -689,28 +676,24 @@ public:
         }
     }
 
-    void print_subcommand_help(const std::string &subcmd_name) const
+    void print_subcommand_help(const std::string &subcmd_name)
     {
         auto it = commands_.find(subcmd_name);
         if (it == commands_.end())
             return;
 
         const auto &cmd = it->second;
-        const ArgumentOptions &parser = *cmd->parser;
-
+        ArgumentOptions &parser = *cmd->parser;
         std::cout << programname_ << " " << subcmd_name << ": " << parser.get_description() << "\n";
         if (!parser.get_version().empty())
         {
             std::cout << "Version: " << parser.get_version() << "\n";
         }
-
         std::cout << "Usage: " << programname_ << " " << subcmd_name << " [options]";
-
-        for (const auto &name : parser.get_positionals())
+        for (const auto &name : parser.positionals_)
         {
             std::cout << " <" << name << ">";
         }
-
         std::cout << "\n\n";
 
         print_argument_details("Required arguments", parser, true);
@@ -725,7 +708,7 @@ public:
     bool has_command(const std::string &name) const { return commands_.find(name) != commands_.end(); }
     std::string get_program_name() const { return programname_; }
     void set_program_name(const std::string &name) { programname_ = name; }
-    std::string get_current_command() const { return current_command; }
+    std::string get_current_command() const { return *current_command; }
     void set_description(const std::string &description) { description_ = description; }
     std::string get_description() const { return description_; }
     void set_version(const std::string &version) { version_ = version; }
@@ -733,30 +716,25 @@ public:
     void footnote(const std::string &note) { note_ = note; }
 
 private:
-    void print_argument_details(const std::string &title, const ArgumentOptions &parser, bool show_required) const
+    void print_argument_details(const std::string &title, ArgumentOptions &parser, bool show_required)
     {
-        const auto &arguments = parser.get_arguments();
-        const auto &option_order = parser.get_order();
-
+        const auto &arguments = parser.arguments_;
+        const auto &option_order = parser.order_;
+        // Move help argument to the end
+        Option *help_arg = parser.get_helparg();
+        if (help_arg)
+        {
+            auto it = std::find(parser.order_.begin(), parser.order_.end(), help_arg->long_opt);
+            if (it != parser.order_.end())
+                std::rotate(it, it + 1, parser.order_.end());
+        }
+        // Calculate the maximum width of all arguments (regardless of Required/Optional)
+        size_t opt_w = 0, type_w = 0;
         bool has_args = false;
         for (const auto &name : option_order)
         {
             const Option *arg = arguments.at(name).get();
-            if (arg->required == show_required && arg->arg_type != ArgType::Positional)
-            {
-                has_args = true;
-                break;
-            }
-        }
-
-        if (!has_args)
-            return;
-
-        size_t opt_w = 0, type_w = 0;
-        for (const auto &name : option_order)
-        {
-            const Option *arg = arguments.at(name).get();
-            if (arg->required == show_required && arg->arg_type != ArgType::Positional)
+            if (arg->arg_type != ArgType::Positional)
             {
                 std::string opt_str;
                 if (arg->short_opt != '\0')
@@ -768,9 +746,19 @@ private:
                     opt_str = std::string("--") + arg->long_opt;
                 }
                 opt_w = std::max(opt_w, opt_str.length());
-                type_w = std::max(type_w, type_name(arg->get_type()).length());
+
+                std::string type_str = (arg->arg_type == ArgType::Flag) ? "bool" : type_name(arg->get_type());
+                type_w = std::max(type_w, type_str.length());
+
+                // Check if there are arguments in the current category
+                if (arg->required == show_required)
+                {
+                    has_args = true;
+                }
             }
         }
+        if (!has_args)
+            return; // if no arguments in this category, skip printing
 
         std::cout << title << ":\n";
         for (const auto &name : option_order)
@@ -779,7 +767,6 @@ private:
             if (arg->required == show_required && arg->arg_type != ArgType::Positional)
             {
                 std::cout << "  ";
-
                 // option name
                 std::string opt_str;
                 if (arg->short_opt != '\0')
@@ -792,13 +779,13 @@ private:
                 }
                 std::cout << std::setw(opt_w) << std::left << opt_str << "    ";
 
-                std::string type_str = (arg->arg_type == ArgType::Flag) ? "flag" : type_name(arg->get_type());
+                std::string type_str = (arg->arg_type == ArgType::Flag) ? "bool" : type_name(arg->get_type());
                 std::cout << std::setw(type_w) << std::left << type_str << "    ";
 
                 if (arg->deprecated)
                     std::cout << "[Deprecated] ";
-                std::cout << arg->help;
 
+                std::cout << arg->help;
                 if (arg->is_set && arg->arg_type != ArgType::Flag)
                     std::cout << " (default: " << arg->to_string() << ")";
 
@@ -812,12 +799,30 @@ private:
     {
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
-        std::vector<std::string> positional_values;
+        // Check for help flag if enabled
+        Option *help_arg = parser.get_helparg();
+        if (help_arg)
+        {
+            std::string short_opt;
+            if (help_arg->short_opt != '\0')
+                short_opt = std::string("-") + std::string(1, help_arg->short_opt);
+            std::string long_opt = std::string("--") + help_arg->long_opt;
 
+            for (int i = 1; i < argc; ++i)
+            {
+                std::string a = argv[i];
+                if ((!short_opt.empty() && a == short_opt) || a == long_opt)
+                {
+                    print_subcommand_help(subcmd_name);
+                    std::exit(EXIT_SUCCESS);
+                }
+            }
+        }
+
+        std::vector<std::string> positional_values;
         for (int i = 1; i < argc; i++)
         {
             const std::string arg = argv[i];
-
             if (utils::is_longopt(arg))
             {
                 std::string opt_name = arg.substr(2);
@@ -829,7 +834,7 @@ private:
                     opt_name = opt_name.substr(0, eq_pos);
                 }
 
-                const auto &arguments = parser.get_arguments();
+                const auto &arguments = parser.arguments_;
                 auto it = arguments.find(opt_name);
                 if (it == arguments.end())
                     throw std::runtime_error("Unknown argument: --" + opt_name);
@@ -858,7 +863,7 @@ private:
             }
             else if (utils::is_shortopt(arg))
             {
-                const auto &arguments_ = parser.get_arguments();
+                const auto &arguments_ = parser.arguments_;
                 if (arg.size() > 2)
                 {
                     char first_opt = arg[1];
@@ -871,7 +876,6 @@ private:
                             break;
                         }
                     }
-
                     if (!first_argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + first_opt);
 
@@ -939,10 +943,9 @@ private:
                 positional_values.push_back(arg);
             }
         }
-
         // deal with positional arguments
-        auto &arguments = parser.get_arguments();
-        const auto &positionals = parser.get_positionals();
+        auto &arguments = parser.arguments_;
+        const auto &positionals = parser.positionals_;
         for (size_t i = 0; i < positionals.size(); ++i)
         {
             if (i < positional_values.size())
@@ -952,7 +955,6 @@ private:
                 arguments[name]->is_set = true;
             }
         }
-
         // check required arguments
         for (const auto &pair : arguments)
         {
@@ -969,10 +971,9 @@ private:
         Command(Callable c, std::unique_ptr<ArgumentOptions> a)
             : callable(std::move(c)), parser(std::move(a)) {}
     };
-    bool ready_to_execute_ = false;
     std::string programname_;
     std::string description_;
-    std::string current_command;
+    std::unique_ptr<std::string> current_command;
     std::string version_;
     std::string note_;
     std::unordered_map<std::string, std::unique_ptr<Command>> commands_;

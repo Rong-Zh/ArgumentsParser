@@ -169,6 +169,7 @@ public:
     bool required = false;
     bool is_set = false;
     bool deprecated = false;
+    bool is_helparg = false;
 
     virtual std::string to_string() const = 0;
     virtual void from_string(const std::string &value) = 0;
@@ -326,8 +327,7 @@ public:
             throw std::runtime_error(msg);
         }
         */
-        auto arg = Arg::argument(expected.get());
-        add_argument_impl(std::move(arg), short_opt, long_opt, type, help, expected);
+        add_argument_impl(Arg::argument(expected.get()), short_opt, long_opt, type, help, expected);
     }
 
     template <typename T, typename U>
@@ -365,8 +365,7 @@ public:
                 "', value: " + into_string(expected.get()) +
                 " does not satisfy constraint: " + constraint.desc());
         }
-        auto arg = Arg::argument(expected.get(), constraint);
-        add_argument_impl(std::move(arg), short_opt, long_opt, type, help + constraint.desc(), expected);
+        add_argument_impl(Arg::argument(expected.get(), constraint), short_opt, long_opt, type, help + constraint.desc(), expected);
     }
 
     template <typename T>
@@ -433,6 +432,11 @@ public:
         add_argument<bool>('\0', long_opt, ArgType::Flag, help, Expected<bool>());
     }
 
+    void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
+    {
+        add_argument_impl(Arg::argument(Expected<bool>().get()), short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), true);
+    }
+
     template <typename T>
     T get(const std::string &name) const
     {
@@ -485,15 +489,18 @@ public:
     void parse_args(int argc, char *argv[])
     {
         // Check for help flag if enabled
-        if (helparg_)
+        ArgumentBase *args = get_helparg();
+        if (args)
         {
-            ArgumentBase *args = arguments_.at(*helparg_).get();
-            std::string short_opt = "-" + args->short_opt;
-            std::string long_opt = "--" + args->long_opt;
-            for (int i = 1; i < argc; i++)
+            std::string short_opt;
+            if (args->short_opt != '\0')
+                short_opt = std::string("-") + std::string(1, args->short_opt);
+            std::string long_opt = std::string("--") + args->long_opt;
+
+            for (int i = 1; i < argc; ++i)
             {
-                std::string arg = argv[i];
-                if (arg == short_opt || arg == long_opt)
+                std::string a = argv[i];
+                if ((!short_opt.empty() && a == short_opt) || a == long_opt)
                 {
                     print_help();
                     std::exit(EXIT_SUCCESS);
@@ -504,17 +511,7 @@ public:
         if (argc < 2)
         {
             // Check if there are any required arguments
-            bool has_required = false;
-            for (const auto &pair : arguments_)
-            {
-                if (pair.second->required && pair.second->arg_type != ArgType::Positional)
-                {
-                    has_required = true;
-                    break;
-                }
-            }
-
-            if (has_required)
+            if (has_required())
             {
                 // Has required arguments, show help and exit
                 print_help();
@@ -776,38 +773,64 @@ public:
         note_ = note;
     }
 
-    void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
+private:
+    bool has_required() const
     {
-        add_flag(short_opt, long_opt, help);
-        helparg_ = std::unique_ptr<std::string>(new std::string(long_opt));
+        for (const auto &pair : arguments_)
+        {
+            if (pair.second->required)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
-private:
+    bool has_helparg()
+    {
+        return get_helparg() != nullptr;
+    }
+
+    ArgumentBase *get_helparg()
+    {
+        for (const auto &pair : arguments_)
+        {
+            if (pair.second->is_helparg)
+                return pair.second.get();
+        }
+        return nullptr;
+    }
+
     void print_help(const std::string &title, bool required_flag)
     {
-        // Calculate widths
         size_t opt_w = 0, type_w = 0;
         bool has_args = false;
         for (const auto &name : order_)
         {
             const ArgumentBase *arg = arguments_.at(name).get();
-            if (arg->required == required_flag && arg->arg_type != ArgType::Positional)
+            if (arg->arg_type != ArgType::Positional)
             {
-                has_args = true;
                 opt_w = std::max(opt_w, arg->long_opt.length());
-                type_w = std::max(type_w, type_name(arg->get_type()).length());
+                std::string type_str = (arg->arg_type == ArgType::Flag) ? "bool" : type_name(arg->get_type());
+                type_w = std::max(type_w, type_str.length());
+                if (arg->required == required_flag)
+                {
+                    has_args = true;
+                }
             }
         }
         if (!has_args)
             return;
         std::cout << title << ":\n";
         // Move help argument to the end
-        if (helparg_)
+        ArgumentBase *help_arg = get_helparg();
+        if (help_arg)
         {
-            auto it = std::find(order_.begin(), order_.end(), *helparg_);
+            auto it = std::find(order_.begin(), order_.end(), help_arg->long_opt);
             if (it != order_.end())
                 std::rotate(it, it + 1, order_.end());
         }
+
         // Print arguments
         for (const auto &name : order_)
         {
@@ -821,12 +844,18 @@ private:
                     std::cout << "    ";
 
                 std::cout << "--" << std::setw(opt_w) << std::left << arg->long_opt << "    ";
-                std::cout << std::setw(type_w) << std::left << (arg->arg_type == ArgType::Flag ? "flag" : type_name(arg->get_type())) << "    ";
+                std::cout << std::setw(type_w) << std::left
+                          << (arg->arg_type == ArgType::Flag ? "bool" : type_name(arg->get_type()))
+                          << "    ";
+
                 if (arg->deprecated)
                     std::cout << "[Deprecated] ";
-                std::cout << arg->help << ". ";
+
+                std::cout << arg->help;
+
                 if (arg->is_set)
-                    std::cout << "(default: " << arg->to_string() << ")";
+                    std::cout << " (default: " << arg->to_string() << ")";
+
                 std::cout << "\n";
             }
         }
@@ -861,7 +890,8 @@ private:
         const std::string &long_opt,
         ArgType type,
         const std::string &help,
-        const Expected<T> &expected)
+        const Expected<T> &expected,
+        bool is_helparg = false)
     {
         if (exists(short_opt))
         {
@@ -877,6 +907,7 @@ private:
         arg->arg_type = type;
         arg->required = (type == ArgType::Required);
         arg->is_set = expected.has_value();
+        arg->is_helparg = is_helparg;
         if (type == ArgType::Positional)
         {
             positionals_.push_back(long_opt);
@@ -889,7 +920,6 @@ private:
     std::string description_;
     std::string version_;
     std::string note_;
-    std::unique_ptr<std::string> helparg_;
     std::unordered_map<std::string, std::unique_ptr<ArgumentBase>> arguments_;
     std::vector<std::string> order_;
     std::vector<std::string> positionals_;
