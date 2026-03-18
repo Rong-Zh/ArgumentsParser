@@ -18,6 +18,7 @@ A lightweight, header-only C++11 command-line argument parsing library with supp
 - ✅ **Argument validation**: Range and choice constraints
 - ✅ **Deprecation support**: Mark arguments as deprecated
 - ✅ **Custom types**: File type with existence checking
+- ✅ **Repeatable arguments**: Collect multiple values into `std::vector<T>`
 - ✅ **C++11 compatible**: No external dependencies
 
 ## Requirements
@@ -175,6 +176,23 @@ parser.add_positional<std::string>("output", "Output file");
 
 **Usage:** `myapp input.txt output.txt`
 
+### 5. Repeatable Arguments
+Collect multiple values into a `std::vector<T>`. The template type parameter **must be specified explicitly**.
+
+```cpp
+// Collect multiple values into std::vector<std::string>
+parser.add_repeatable<std::string>('f', "field", "Field name (repeatable)");
+parser.add_repeatable<int>("count", "Count value (repeatable)");
+
+// Retrieve as vector
+auto fields = parser.get<std::vector<std::string>>("field");
+auto counts = parser.get<std::vector<int>>("count");
+```
+
+**Usage:** `myapp -f name -f age -f score` → `fields = {"name", "age", "score"}`
+
+> **Note:** `add_repeatable<T>` requires an explicit template argument — the compiler cannot deduce `T` from the string parameters.
+
 ## Advanced Features
 
 ### 1. Argument Constraints
@@ -252,7 +270,8 @@ Built-in type support:
 - `bool` (`true/false`, `1/0`, `True/False`, `TRUE/FALSE`)
 - `std::string`
 - `File` (custom type with existence checking)
-- 
+- `std::vector<T>` (any of the above as element type, used with `add_repeatable`)
+
 ## Help Output Example
 
 ```
@@ -279,6 +298,7 @@ Maintainer: Your Name, Email: your@email.com
 4. **Validate early**: Use constraints (Range, Choices) instead of manual validation
 5. **Use subcommands**: For complex applications with multiple operations
 6. **Type safety**: Specify template types explicitly: `parser.get<int>("count")`
+7. **Repeatable type**: Always specify element type for `add_repeatable`: `add_repeatable<std::string>(...)`, not `add_repeatable(...)`
 
 ## Building Examples
 ```bash

@@ -46,27 +46,25 @@ int main(int argc, char *argv[])
     parser.add_optional<double>("name", "Discount", 0.0);
     // flag argument
     // Add help argument (at arbitrary position)
-    parser.add_help('\0', "niuma", "Show help message");
+    parser.add_help('h', "help", "Show help message");
 
     parser.add_flag('v', "verbose", "Show verbose output");
     parser.add_flag('x', "xvalue", "Use x");
     parser.add_flag('y', "yvalue", "Use y");
     parser.add_flag("quiet", "Quiet mode");
+
+    // Repeatable argument: -f val1 -f val2 -f val3
+    parser.add_repeatable<int>('f', "field", "Database field spec (repeatable, e.g. -f db1:bed:col1 -f db2:vcf:col2)");
+
     // Positional arguments
     parser.add_positional<std::string>("input", "Input filename");
     parser.add_positional<std::string>("output", "Output filename");
 
     parser.footnote("Maintainer: RongZh, Email: xxxxxxxxxx@google.com");
 
-    // bool flag = parser.deprecate("verbose");
-    //  if (flag)
-    //  {
-    //      std::cout << "The 'verbose' flag is deprecated." << std::endl;
-    //  }
     parser.parse_args(argc, argv);
 
     // Retrieve all argument values
-    int number = parser.get<int>("number");
     int age = parser.get<int>("age");
     std::string color = parser.get<std::string>("color");
     double discount = parser.get<double>("m");
@@ -82,9 +80,9 @@ int main(int argc, char *argv[])
     bool b = parser.get<bool>("bool");
     bool xvalue = parser.get<bool>("xvalue");
     bool yvalue = parser.get<bool>("yvalue");
+    auto fields = parser.get<std::vector<int>>("field");
 
     std::cout << "------------------- Parse Results -------------------" << std::endl;
-    std::cout << "number   : " << number << std::endl;
     std::cout << "age      : " << age << std::endl;
     std::cout << "color    : " << color << std::endl;
     std::cout << "discount : " << discount << std::endl;
@@ -100,6 +98,10 @@ int main(int argc, char *argv[])
     std::cout << "bool     : " << (b ? "true" : "false") << std::endl;
     std::cout << "xvalue   : " << (xvalue ? "true" : "false") << std::endl;
     std::cout << "yvalue   : " << (yvalue ? "true" : "false") << std::endl;
+    std::cout << "fields   : [" << fields.size() << "] ";
+    for (const auto &f : fields)
+        std::cout << f << " ";
+    std::cout << std::endl;
     std::cout << "------------------------------------------------" << std::endl;
 
     return 0;

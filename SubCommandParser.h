@@ -12,33 +12,31 @@
 #include <algorithm>
 #include <functional>
 #include <iomanip>
+#include <type_traits>
+#include <utility>
 
 namespace utils
 {
-    bool startswith(const std::string &str, const std::string &prefix)
+    inline bool startswith(const std::string &str, const std::string &prefix)
     {
         if (prefix.length() > str.length())
-        {
             return false;
-        };
         return str.compare(0, prefix.length(), prefix) == 0;
     }
 
-    bool endswith(const std::string &str, const std::string &suffix)
+    inline bool endswith(const std::string &str, const std::string &suffix)
     {
         if (suffix.length() > str.length())
-        {
             return false;
-        }
         return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
     }
 
-    bool is_longopt(const std::string &arg)
+    inline bool is_longopt(const std::string &arg)
     {
         return startswith(arg, "--");
     }
 
-    bool is_shortopt(const std::string &arg)
+    inline bool is_shortopt(const std::string &arg)
     {
         return startswith(arg, "-") && !startswith(arg, "--");
     }
@@ -59,13 +57,13 @@ std::string into_string(const T &value)
 }
 
 template <>
-std::string into_string(const std::string &value)
+inline std::string into_string(const std::string &value)
 {
     return value;
 }
 
 template <>
-std::string into_string<bool>(const bool &value)
+inline std::string into_string<bool>(const bool &value)
 {
     return value ? "true" : "false";
 }
@@ -87,9 +85,22 @@ public:
 };
 
 template <>
-std::string into_string<File>(const File &value)
+inline std::string into_string<File>(const File &value)
 {
     return std::string(value);
+}
+
+template <typename T>
+std::string into_string(const std::vector<T> &value)
+{
+    if (value.empty())
+        return "";
+    std::string result = into_string(value[0]);
+    for (size_t i = 1; i < value.size(); ++i)
+    {
+        result += "," + into_string(value[i]);
+    }
+    return result;
 }
 
 template <typename T>
@@ -172,7 +183,7 @@ T parse_value(const std::string &str)
 }
 
 template <>
-bool parse_value<bool>(const std::string &str)
+inline bool parse_value<bool>(const std::string &str)
 {
     if (str == "1" || str == "true" || str == "True" || str == "TRUE")
         return true;
@@ -182,10 +193,30 @@ bool parse_value<bool>(const std::string &str)
 }
 
 template <>
-File parse_value<File>(const std::string &str)
+inline File parse_value<File>(const std::string &str)
 {
     return File(str);
 }
+
+template <>
+inline std::vector<std::string> parse_value<std::vector<std::string>>(const std::string &str)
+{
+    return {str};
+}
+
+template <typename T>
+class is_appendable
+{
+private:
+    template <typename U>
+    static auto test(int) -> decltype(std::declval<U &>().push_back(std::declval<typename U::value_type>()), std::true_type());
+
+    template <typename>
+    static std::false_type test(...);
+
+public:
+    static const bool value = decltype(test<T>(0))::value;
+};
 
 template <typename T>
 class Expected
@@ -202,22 +233,46 @@ public:
     T get() const { return value; }
 };
 
-inline std::string type_name(const std::type_info &t)
+template <typename T>
+struct TypeName
 {
-    if (t == typeid(int))
-        return "int";
-    if (t == typeid(float))
-        return "float";
-    if (t == typeid(double))
-        return "double";
-    if (t == typeid(bool))
-        return "bool";
-    if (t == typeid(std::string))
-        return "string";
-    if (t == typeid(File))
-        return "file";
-    return t.name();
-}
+    static std::string name() { return typeid(T).name(); }
+};
+template <>
+struct TypeName<int>
+{
+    static std::string name() { return "int"; }
+};
+template <>
+struct TypeName<float>
+{
+    static std::string name() { return "float"; }
+};
+template <>
+struct TypeName<double>
+{
+    static std::string name() { return "double"; }
+};
+template <>
+struct TypeName<bool>
+{
+    static std::string name() { return "bool"; }
+};
+template <>
+struct TypeName<std::string>
+{
+    static std::string name() { return "string"; }
+};
+template <>
+struct TypeName<File>
+{
+    static std::string name() { return "file"; }
+};
+template <typename T>
+struct TypeName<std::vector<T>>
+{
+    static std::string name() { return TypeName<T>::name() + "[]"; }
+};
 
 class Option
 {
@@ -228,35 +283,35 @@ public:
     std::string help;
     ArgType arg_type;
     bool required = false;
-    bool is_set = false;
+    bool has_default = false; // true if a default value was provided at registration
+    bool was_parsed = false;  // true if the user supplied this argument on the command line
     bool deprecated = false;
     bool is_helparg = false;
+    bool is_repeatable = false;
 
     virtual std::string to_string() const = 0;
     virtual void from_string(const std::string &value) = 0;
+    virtual void append_repeatable(const std::string &value) = 0;
     virtual const std::type_info &get_type() const = 0;
+    virtual std::string display_type() const = 0;
     virtual void *get_value() = 0;
+
+    std::string label_type() const
+    {
+        return arg_type == ArgType::Flag ? "bool" : display_type();
+    }
 };
 
-template <typename T, typename U = void>
-class Argument : public Option
+// CRTP base: holds value and implements the three repeated virtual methods
+template <typename Derived, typename T>
+class OptionValueBase : public Option
 {
 public:
     T value;
-    U constraint;
 
     std::string to_string() const override
     {
-        return into_string<T>(value);
-    }
-
-    void from_string(const std::string &str) override
-    {
-        value = parse_value<T>(str);
-        if (!constraint.check(value))
-        {
-            throw std::runtime_error("Parameter value does not satisfy constraints: " + to_string());
-        }
+        return into_string(value);
     }
 
     const std::type_info &get_type() const override
@@ -264,36 +319,89 @@ public:
         return typeid(T);
     }
 
+    std::string display_type() const override
+    {
+        return TypeName<T>::name();
+    }
+
     void *get_value() override
     {
         return &value;
+    }
+};
+
+template <typename T, typename U = void>
+class Argument : public OptionValueBase<Argument<T, U>, T>
+{
+public:
+    U constraint;
+
+    void from_string(const std::string &str) override
+    {
+        this->value = parse_value<T>(str);
+        if (!constraint.check(this->value))
+        {
+            throw std::runtime_error("Parameter value does not satisfy constraints: " + this->to_string());
+        }
+    }
+
+    void append_repeatable(const std::string &str) override
+    {
+        append_repeatable_impl<T>(str);
+    }
+
+private:
+    template <typename Q>
+    typename std::enable_if<is_appendable<Q>::value, void>::type append_repeatable_impl(const std::string &str)
+    {
+        this->value.push_back(parse_value<typename Q::value_type>(str));
+    }
+
+    template <typename Q>
+    typename std::enable_if<!is_appendable<Q>::value, void>::type append_repeatable_impl(const std::string &)
+    {
+        throw std::runtime_error("Argument '--" + this->long_opt + "' is marked repeatable but its type does not support push_back");
     }
 };
 
 template <typename T>
-class Argument<T, void> : public Option
+class Argument<T, void> : public OptionValueBase<Argument<T, void>, T>
 {
 public:
-    T value;
-
-    std::string to_string() const override
-    {
-        return into_string<T>(value);
-    }
-
     void from_string(const std::string &str) override
     {
-        value = parse_value<T>(str);
+        from_string_impl<T>(str);
     }
 
-    const std::type_info &get_type() const override
+    void append_repeatable(const std::string &str) override
     {
-        return typeid(T);
+        append_repeatable_impl<T>(str);
     }
 
-    void *get_value() override
+private:
+    template <typename Q>
+    typename std::enable_if<!is_appendable<Q>::value, void>::type from_string_impl(const std::string &str)
     {
-        return &value;
+        this->value = parse_value<Q>(str);
+    }
+
+    template <typename Q>
+    typename std::enable_if<is_appendable<Q>::value, void>::type from_string_impl(const std::string &str)
+    {
+        this->value.clear();
+        this->value.push_back(parse_value<typename Q::value_type>(str));
+    }
+
+    template <typename Q>
+    typename std::enable_if<is_appendable<Q>::value, void>::type append_repeatable_impl(const std::string &str)
+    {
+        this->value.push_back(parse_value<typename Q::value_type>(str));
+    }
+
+    template <typename Q>
+    typename std::enable_if<!is_appendable<Q>::value, void>::type append_repeatable_impl(const std::string &)
+    {
+        throw std::runtime_error("Argument '--" + this->long_opt + "' is marked repeatable but its type does not support push_back");
     }
 };
 
@@ -358,9 +466,35 @@ public:
         add_argument<bool>('\0', long_opt, ArgType::Flag, help, Expected<bool>());
     }
 
+    template <typename T>
+    void add_repeatable(const char short_opt, const std::string &long_opt, const std::string &help)
+    {
+        add_argument<std::vector<T>>(short_opt, long_opt, ArgType::Optional, help, Expected<std::vector<T>>(), false, true);
+    }
+
+    template <typename T>
+    void add_repeatable(const std::string &long_opt, const std::string &help)
+    {
+        add_argument<std::vector<T>>('\0', long_opt, ArgType::Optional, help, Expected<std::vector<T>>(), false, true);
+    }
+
     void add_help(char short_opt = 'h', const std::string &long_opt = "help", const std::string &help = "Show help message")
     {
-        add_argument_impl(Arg::argument(Expected<bool>().get()), short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), true);
+        add_argument<bool>(short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), true);
+    }
+
+    bool was_set(const std::string &name) const
+    {
+        auto it = arguments_.find(name);
+        return it != arguments_.end() && it->second->was_parsed;
+    }
+
+    bool was_set(const char short_opt) const
+    {
+        auto it = short_to_long_.find(short_opt);
+        if (it == short_to_long_.end())
+            return false;
+        return was_set(it->second);
     }
 
     template <typename T>
@@ -370,18 +504,13 @@ public:
         std::string key;
         if (name.size() == 1)
         {
-            char short_opt = name.front();
-            for (const auto &pair : arguments_)
-            {
-                if (pair.second->short_opt == short_opt)
-                {
-                    arg = pair.second.get();
-                    key = "-" + name;
-                    break;
-                }
-            }
-            if (!arg)
+            char sopt = name.front();
+            auto sit = short_to_long_.find(sopt);
+            if (sit == short_to_long_.end())
                 throw std::runtime_error("Argument not found: -" + name);
+            auto it = arguments_.find(sit->second);
+            arg = it->second.get();
+            key = "-" + name;
         }
         else
         {
@@ -395,8 +524,8 @@ public:
         if (arg->get_type() != typeid(T))
         {
             throw std::runtime_error("Argument type mismatch: " + key +
-                                     ", expected " + type_name(typeid(T)) +
-                                     ", got " + type_name(arg->get_type()));
+                                     ", expected " + TypeName<T>::name() +
+                                     ", got " + arg->display_type());
         }
         void *ptr = arg->get_value();
         if (!ptr)
@@ -418,17 +547,8 @@ public:
     bool exists(const char short_opt) const
     {
         if (short_opt == '\0')
-        {
             return false;
-        }
-        for (const auto &pair : arguments_)
-        {
-            if (pair.second->short_opt == short_opt)
-            {
-                return true;
-            }
-        }
-        return false;
+        return short_to_long_.find(short_opt) != short_to_long_.end();
     }
 
     void set_program_name(const std::string &name) { programname_ = name; }
@@ -451,13 +571,11 @@ public:
 
     bool deprecate(char short_opt)
     {
-        for (auto &pair : arguments_)
+        auto it = short_to_long_.find(short_opt);
+        if (it != short_to_long_.end())
         {
-            if (pair.second->short_opt == short_opt)
-            {
-                pair.second->deprecated = true;
-                return true;
-            }
+            arguments_[it->second]->deprecated = true;
+            return true;
         }
         return false;
     }
@@ -475,12 +593,12 @@ protected:
         return false;
     }
 
-    bool has_helparg()
+    bool has_helparg() const
     {
         return get_helparg() != nullptr;
     }
 
-    Option *get_helparg()
+    Option *get_helparg() const
     {
         for (const auto &pair : arguments_)
         {
@@ -519,27 +637,29 @@ protected:
         ArgType type,
         const std::string &help,
         const Expected<T> &expected,
-        bool is_helparg = false)
+        bool is_helparg = false,
+        bool is_repeatable = false)
     {
-        if (exists(short_opt))
-        {
+        if (long_opt.empty())
+            throw std::runtime_error("Long option cannot be empty.");
+        if (short_opt != '\0' && exists(short_opt))
             throw std::runtime_error("Short option '" + std::string(1, short_opt) + "' already exists.");
-        }
-        arg->short_opt = short_opt;
         if (exists(long_opt))
-        {
             throw std::runtime_error("Long option '" + long_opt + "' already exists.");
-        }
+
+        arg->short_opt = short_opt;
         arg->long_opt = long_opt;
         arg->help = help;
         arg->arg_type = type;
         arg->required = (type == ArgType::Required);
-        arg->is_set = expected.has_value();
+        arg->has_default = expected.has_value();
+        arg->was_parsed = false;
         arg->is_helparg = is_helparg;
+        arg->is_repeatable = is_repeatable;
         if (type == ArgType::Positional)
-        {
             positionals_.push_back(long_opt);
-        }
+        if (short_opt != '\0')
+            short_to_long_[short_opt] = long_opt;
         arguments_[long_opt] = std::move(arg);
         order_.push_back(long_opt);
     }
@@ -550,9 +670,11 @@ protected:
         const std::string &long_opt,
         ArgType type,
         const std::string &help,
-        const Expected<T> &expected = Expected<T>())
+        const Expected<T> &expected = Expected<T>(),
+        bool is_helparg = false,
+        bool is_repeatable = false)
     {
-        add_argument_impl(Arg::argument(expected.get()), short_opt, long_opt, type, help, expected);
+        add_argument_impl(Arg::argument(expected.get()), short_opt, long_opt, type, help, expected, is_helparg, is_repeatable);
     }
 
     template <typename T, typename U>
@@ -564,10 +686,6 @@ protected:
         const Expected<T> &expected = Expected<T>(),
         const U &constraint = U())
     {
-        if (long_opt.empty())
-        {
-            throw std::runtime_error("Long option cannot be empty.");
-        }
         if (!constraint.check(expected.get()))
         {
             throw std::runtime_error(
@@ -583,6 +701,7 @@ protected:
     std::string version_;
     std::string note_;
     std::unordered_map<std::string, std::unique_ptr<Option>> arguments_;
+    std::unordered_map<char, std::string> short_to_long_; // short opt -> long opt index
     std::vector<std::string> order_;
     std::vector<std::string> positionals_;
 };
@@ -657,21 +776,21 @@ public:
         // Check if all arguments are optional
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
-        if (parser.has_required() && argc < 3)
+        if (argc < 3 && (parser.has_required() || parser.has_helparg()))
         {
-            // Has required arguments but no arguments provided, show help
+            // No arguments provided, show help
             print_subcommand_help(subcmd_name);
             std::exit(EXIT_SUCCESS);
         }
         parse_args(subcmd_name, argc - 1, argv + 1);
-        current_command = std::unique_ptr<std::string>(new std::string(subcmd_name));
+        current_command_ = subcmd_name;
     }
 
     int execute()
     {
-        if (!current_command)
+        if (current_command_.empty())
             throw std::runtime_error("Error: No command selected (did you call parse_args?)");
-        auto &cmd = commands_[*current_command];
+        auto &cmd = commands_[current_command_];
         return cmd->callable(*cmd->parser);
     }
 
@@ -725,8 +844,7 @@ public:
         }
         std::cout << "\n\n";
 
-        print_argument_details("Required arguments", parser, true);
-        print_argument_details("Optional arguments", parser, false);
+        print_argument_sections(parser);
 
         if (!note_.empty())
         {
@@ -737,7 +855,7 @@ public:
     bool has_command(const std::string &name) const { return commands_.find(name) != commands_.end(); }
     std::string get_program_name() const { return programname_; }
     void set_program_name(const std::string &name) { programname_ = name; }
-    std::string get_current_command() const { return *current_command; }
+    std::string get_current_command() const { return current_command_; }
     void set_description(const std::string &description) { description_ = description; }
     std::string get_description() const { return description_; }
     void set_version(const std::string &version) { version_ = version; }
@@ -745,102 +863,105 @@ public:
     void footnote(const std::string &note) { note_ = note; }
 
 private:
-    void print_argument_details(const std::string &title, ArgumentOptions &parser, bool show_required)
+    void print_argument_sections(ArgumentOptions &parser)
     {
         const auto &arguments = parser.arguments_;
-        const auto &option_order = parser.order_;
-        // Move help argument to the end
+
+        // Build display order once
+        auto display_order = parser.order_;
         Option *help_arg = parser.get_helparg();
         if (help_arg)
         {
-            auto it = std::find(parser.order_.begin(), parser.order_.end(), help_arg->long_opt);
-            if (it != parser.order_.end())
-                std::rotate(it, it + 1, parser.order_.end());
+            auto it = std::find(display_order.begin(), display_order.end(), help_arg->long_opt);
+            if (it != display_order.end())
+                std::rotate(it, it + 1, display_order.end());
         }
-        // Calculate the maximum width of all arguments (regardless of Required/Optional)
+
+        // Compute column widths in one pass (across all non-positional arguments)
         size_t opt_w = 0, type_w = 0;
-        bool has_args = false;
-        for (const auto &name : option_order)
+        for (const auto &name : display_order)
         {
             const Option *arg = arguments.at(name).get();
-            if (arg->arg_type != ArgType::Positional)
+            if (arg->arg_type == ArgType::Positional)
+                continue;
+            std::string opt_str;
+            if (arg->short_opt != '\0')
+                opt_str = std::string("-") + arg->short_opt + ", --" + arg->long_opt;
+            else
+                opt_str = std::string("--") + arg->long_opt;
+            opt_w = std::max(opt_w, opt_str.length());
+
+            std::string ts = arg->label_type();
+            type_w = std::max(type_w, ts.length());
+        }
+
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            bool req = (pass == 0);
+            const char *section_title = req ? "Required arguments" : "Optional arguments";
+
+            bool has_any = false;
+            for (const auto &name : display_order)
             {
-                std::string opt_str;
-                if (arg->short_opt != '\0')
+                const Option *arg = arguments.at(name).get();
+                if (arg->arg_type != ArgType::Positional && arg->required == req)
                 {
-                    opt_str = std::string("-") + arg->short_opt + ", --" + arg->long_opt;
-                }
-                else
-                {
-                    opt_str = std::string("--") + arg->long_opt;
-                }
-                opt_w = std::max(opt_w, opt_str.length());
-
-                std::string type_str = (arg->arg_type == ArgType::Flag) ? "bool" : type_name(arg->get_type());
-                type_w = std::max(type_w, type_str.length());
-
-                // Check if there are arguments in the current category
-                if (arg->required == show_required)
-                {
-                    has_args = true;
+                    has_any = true;
+                    break;
                 }
             }
-        }
-        if (!has_args)
-            return; // if no arguments in this category, skip printing
+            if (!has_any)
+                continue;
 
-        std::cout << title << ":\n";
-        for (const auto &name : option_order)
-        {
-            const Option *arg = arguments.at(name).get();
-            if (arg->required == show_required && arg->arg_type != ArgType::Positional)
+            std::cout << section_title << ":\n";
+            for (const auto &name : display_order)
             {
+                const Option *arg = arguments.at(name).get();
+                if (arg->arg_type == ArgType::Positional || arg->required != req)
+                    continue;
+
                 std::cout << "  ";
-                // option name
                 std::string opt_str;
                 if (arg->short_opt != '\0')
-                {
                     opt_str = std::string("-") + arg->short_opt + ", --" + arg->long_opt;
-                }
                 else
-                {
                     opt_str = std::string("--") + arg->long_opt;
-                }
                 std::cout << std::setw(opt_w) << std::left << opt_str << "    ";
 
-                std::string type_str = (arg->arg_type == ArgType::Flag) ? "bool" : type_name(arg->get_type());
+                std::string type_str = arg->label_type();
                 std::cout << std::setw(type_w) << std::left << type_str << "    ";
 
                 if (arg->deprecated)
                     std::cout << "[Deprecated] ";
 
                 std::cout << arg->help;
-                if (arg->is_set && arg->arg_type != ArgType::Flag)
+                if (arg->has_default && arg->arg_type != ArgType::Flag)
                     std::cout << " (default: " << arg->to_string() << ")";
 
                 std::cout << "\n";
             }
+            std::cout << "\n";
         }
-        std::cout << "\n";
     }
 
     void parse_args(std::string subcmd_name, int argc, char *argv[])
     {
         auto &cmd = commands_[subcmd_name];
         ArgumentOptions &parser = *cmd->parser;
+
         // Check for help flag if enabled
         Option *help_arg = parser.get_helparg();
         if (help_arg)
         {
-            std::string short_opt;
+            std::string help_short;
             if (help_arg->short_opt != '\0')
-                short_opt = std::string("-") + std::string(1, help_arg->short_opt);
-            std::string long_opt = std::string("--") + help_arg->long_opt;
+                help_short = std::string("-") + std::string(1, help_arg->short_opt);
+            std::string help_long = std::string("--") + help_arg->long_opt;
 
             for (int i = 1; i < argc; ++i)
             {
                 std::string a = argv[i];
-                if ((!short_opt.empty() && a == short_opt) || a == long_opt)
+                if ((!help_short.empty() && a == help_short) || a == help_long)
                 {
                     print_subcommand_help(subcmd_name);
                     std::exit(EXIT_SUCCESS);
@@ -863,16 +984,13 @@ private:
                     opt_name = opt_name.substr(0, eq_pos);
                 }
 
-                const auto &arguments = parser.arguments_;
-                auto it = arguments.find(opt_name);
-                if (it == arguments.end())
+                auto it = parser.arguments_.find(opt_name);
+                if (it == parser.arguments_.end())
                     throw std::runtime_error("Unknown argument: --" + opt_name);
 
                 Option *argument = it->second.get();
                 if (argument->deprecated)
-                {
                     throw std::runtime_error("Argument '--" + opt_name + "' is deprecated and cannot be used.");
-                }
 
                 if (argument->arg_type == ArgType::Flag)
                 {
@@ -886,84 +1004,84 @@ private:
                             throw std::runtime_error("Argument --" + opt_name + " requires a value");
                         value = argv[++i];
                     }
-                    argument->from_string(value);
+                    if (argument->is_repeatable)
+                        argument->append_repeatable(value);
+                    else
+                        argument->from_string(value);
                 }
-                argument->is_set = true;
+                argument->was_parsed = true;
             }
             else if (utils::is_shortopt(arg))
             {
-                const auto &arguments_ = parser.arguments_;
                 if (arg.size() > 2)
                 {
-                    char first_opt = arg[1];
+                    char first_sopt = arg[1];
                     Option *first_argument = nullptr;
-                    for (const auto &pair : arguments_)
                     {
-                        if (pair.second->short_opt == first_opt)
-                        {
-                            first_argument = pair.second.get();
-                            break;
-                        }
+                        auto sit = parser.short_to_long_.find(first_sopt);
+                        if (sit != parser.short_to_long_.end())
+                            first_argument = parser.arguments_.at(sit->second).get();
                     }
                     if (!first_argument)
-                        throw std::runtime_error(std::string("Unknown argument: -") + first_opt);
+                        throw std::runtime_error(std::string("Unknown argument: -") + first_sopt);
 
-                    // if the first argument is not a flag,  value is after argument
+                    // if the first argument is not a flag, value follows the short letter
                     if (first_argument->arg_type != ArgType::Flag)
                     {
                         std::string value = arg.substr(2);
-                        first_argument->from_string(value);
-                        first_argument->is_set = true;
+                        if (first_argument->is_repeatable)
+                            first_argument->append_repeatable(value);
+                        else
+                            first_argument->from_string(value);
+                        first_argument->was_parsed = true;
                     }
                     else
                     {
                         for (size_t j = 1; j < arg.size(); ++j)
                         {
-                            char short_opt = arg[j];
+                            char sopt = arg[j];
                             Option *argument = nullptr;
-                            for (const auto &pair : arguments_)
                             {
-                                if (pair.second->short_opt == short_opt)
-                                {
-                                    argument = pair.second.get();
-                                    break;
-                                }
+                                auto sit = parser.short_to_long_.find(sopt);
+                                if (sit != parser.short_to_long_.end())
+                                    argument = parser.arguments_.at(sit->second).get();
                             }
                             if (!argument)
-                                throw std::runtime_error(std::string("Unknown short flag: -") + short_opt);
+                                throw std::runtime_error(std::string("Unknown short flag: -") + sopt);
                             if (argument->arg_type != ArgType::Flag)
-                                throw std::runtime_error(std::string("Only flag arguments can be merged: -") + short_opt);
+                                throw std::runtime_error(std::string("Only flag arguments can be merged: -") + sopt);
                             argument->from_string("true");
-                            argument->is_set = true;
+                            argument->was_parsed = true;
                         }
                     }
                 }
                 else
                 {
-                    char short_opt = arg[1];
+                    char sopt = arg[1];
                     Option *argument = nullptr;
-                    for (const auto &pair : arguments_)
                     {
-                        if (pair.second->short_opt == short_opt)
-                        {
-                            argument = pair.second.get();
-                            break;
-                        }
+                        auto sit = parser.short_to_long_.find(sopt);
+                        if (sit != parser.short_to_long_.end())
+                            argument = parser.arguments_.at(sit->second).get();
                     }
                     if (!argument)
-                        throw std::runtime_error(std::string("Unknown argument: -") + short_opt);
+                        throw std::runtime_error(std::string("Unknown argument: -") + sopt);
 
                     if (argument->arg_type == ArgType::Flag)
                     {
                         argument->from_string("true");
-                        argument->is_set = true;
+                        argument->was_parsed = true;
                     }
                     else
                     {
                         if (i + 1 >= argc)
-                            throw std::runtime_error(std::string("Argument -") + short_opt + " requires a value");
-                        argument->from_string(argv[++i]);
-                        argument->is_set = true;
+                            throw std::runtime_error(std::string("Argument -") + sopt + " requires a value");
+                        std::string value = argv[++i];
+                        if (argument->is_repeatable)
+                            argument->append_repeatable(value);
+                        else
+                            argument->from_string(value);
+                        argument->was_parsed = true;
                     }
                 }
             }
@@ -972,23 +1090,23 @@ private:
                 positional_values.push_back(arg);
             }
         }
+
         // deal with positional arguments
-        auto &arguments = parser.arguments_;
         const auto &positionals = parser.positionals_;
         for (size_t i = 0; i < positionals.size(); ++i)
         {
             if (i < positional_values.size())
             {
                 const std::string &name = positionals[i];
-                arguments[name]->from_string(positional_values[i]);
-                arguments[name]->is_set = true;
+                parser.arguments_[name]->from_string(positional_values[i]);
+                parser.arguments_[name]->was_parsed = true;
             }
         }
+
         // check required arguments
-        for (const auto &pair : arguments)
+        for (const auto &pair : parser.arguments_)
         {
-            const auto &arg = pair.second;
-            if (arg->required && !arg->is_set)
+            if (pair.second->required && !pair.second->was_parsed)
                 throw std::runtime_error("Required argument missing: " + pair.first);
         }
     }
@@ -1000,9 +1118,10 @@ private:
         Command(Callable c, std::unique_ptr<ArgumentOptions> a)
             : callable(std::move(c)), parser(std::move(a)) {}
     };
+
     std::string programname_;
     std::string description_;
-    std::unique_ptr<std::string> current_command;
+    std::string current_command_;
     std::string version_;
     std::string note_;
     std::unordered_map<std::string, std::unique_ptr<Command>> commands_;
