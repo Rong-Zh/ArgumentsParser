@@ -2,6 +2,8 @@
 
 #include <string>
 #include <vector>
+#include <deque>
+#include <list>
 #include <unordered_map>
 #include <stdexcept>
 #include <sstream>
@@ -232,18 +234,26 @@ inline std::vector<std::string> parse_value<std::vector<std::string>>(const std:
     return {str};
 }
 
+// Whitelist: sequential containers treated as appendable for repeatable arguments.
+// Excludes std::string which has push_back but is not a container in this context.
 template <typename T>
-class is_appendable
+struct is_appendable : std::false_type
 {
-private:
-    template <typename U>
-    static auto test(int) -> decltype(std::declval<U &>().push_back(std::declval<typename U::value_type>()), std::true_type());
+};
 
-    template <typename>
-    static std::false_type test(...);
+template <typename T, typename A>
+struct is_appendable<std::vector<T, A>> : std::true_type
+{
+};
 
-public:
-    static const bool value = decltype(test<T>(0))::value;
+template <typename T, typename A>
+struct is_appendable<std::deque<T, A>> : std::true_type
+{
+};
+
+template <typename T, typename A>
+struct is_appendable<std::list<T, A>> : std::true_type
+{
 };
 
 // Distinguish between explicit 0 and construct T(), link c++17 optional
