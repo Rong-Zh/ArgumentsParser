@@ -40,7 +40,12 @@ namespace utils
 
     inline bool is_shortopt(const std::string &arg)
     {
-        return startswith(arg, "-") && !startswith(arg, "--");
+        if (!startswith(arg, "-") || startswith(arg, "--"))
+            return false;
+        // "-1", "-3.14" etc. are negative numbers, not short options
+        if (arg.size() >= 2 && (std::isdigit(static_cast<unsigned char>(arg[1])) || arg[1] == '.'))
+            return false;
+        return true;
     }
 }
 
@@ -298,6 +303,7 @@ public:
     bool deprecated = false;
     bool is_helparg = false;
     bool is_repeatable = false;
+    bool is_variadic = false; // true if this positional absorbs all remaining positional values
 
     virtual std::string to_string() const = 0;
     virtual void from_string(const std::string &value) = 0;
@@ -430,6 +436,20 @@ public:
         add_argument<T>('\0', long_opt, ArgType::Positional, help, Expected<T>());
     }
 
+    // Variadic positional: absorbs all remaining positional values into a vector<T>.
+    // Must be registered last; only one variadic positional is allowed.
+    template <typename T>
+    void add_positional_variadic(const std::string &long_opt, const std::string &help)
+    {
+        for (const auto &name : positionals_)
+        {
+            if (arguments_.count(name) && arguments_.at(name)->is_variadic)
+                throw std::runtime_error("Only one variadic positional is allowed; '" + name + "' is already variadic.");
+        }
+        add_argument<std::vector<T>>('\0', long_opt, ArgType::Positional, help, Expected<std::vector<T>>(), false, true);
+        arguments_[long_opt]->is_variadic = true;
+    }
+
     template <typename T>
     void add_required(const char short_opt, const std::string &long_opt, const std::string &help)
     {
@@ -449,9 +469,21 @@ public:
     }
 
     template <typename T>
+    void add_optional(const char short_opt, const std::string &long_opt, const std::string &help)
+    {
+        add_argument<T>(short_opt, long_opt, ArgType::Optional, help, Expected<T>());
+    }
+
+    template <typename T>
     void add_optional(const std::string &long_opt, const std::string &help, const Expected<T> &expected)
     {
         add_argument<T>('\0', long_opt, ArgType::Optional, help, expected);
+    }
+
+    template <typename T>
+    void add_optional(const std::string &long_opt, const std::string &help)
+    {
+        add_argument<T>('\0', long_opt, ArgType::Optional, help, Expected<T>());
     }
 
     template <typename T, typename U>
@@ -696,7 +728,7 @@ protected:
         const Expected<T> &expected = Expected<T>(),
         const U &constraint = U())
     {
-        if (!constraint.check(expected.get()))
+        if (expected.has_value() && !constraint.check(expected.get()))
         {
             throw std::runtime_error(
                 "Argument: '" + long_opt +
@@ -847,7 +879,8 @@ public:
         std::cout << "Usage: " << programname_ << " " << subcmd_name << " [options]";
         for (const auto &name : parser.positionals_)
         {
-            std::cout << " <" << name << ">";
+            const bool variadic = parser.arguments_.count(name) && parser.arguments_.at(name)->is_variadic;
+            std::cout << " <" << name << (variadic ? "..." : "") << ">";
         }
         std::cout << "\n\n";
 
@@ -977,9 +1010,21 @@ private:
         }
 
         std::vector<std::string> positional_values;
+        bool end_of_opts = false;
         for (int i = 1; i < argc; i++)
         {
             const std::string arg = argv[i];
+            // "--" signals end of options: all remaining tokens are positional values.
+            if (!end_of_opts && arg == "--")
+            {
+                end_of_opts = true;
+                continue;
+            }
+            if (end_of_opts)
+            {
+                positional_values.push_back(arg);
+                continue;
+            }
             if (utils::is_longopt(arg))
             {
                 std::string opt_name = arg.substr(2);
@@ -1105,8 +1150,17 @@ private:
             if (i < positional_values.size())
             {
                 const std::string &name = positionals[i];
-                parser.arguments_[name]->from_string(positional_values[i]);
-                parser.arguments_[name]->was_parsed = true;
+                ArgumentBase *arg = parser.arguments_[name].get();
+                if (arg->is_variadic)
+                {
+                    // Feed all remaining positional values into this argument.
+                    for (size_t j = i; j < positional_values.size(); ++j)
+                        arg->append_repeatable(positional_values[j]);
+                    arg->was_parsed = true;
+                    break;
+                }
+                arg->from_string(positional_values[i]);
+                arg->was_parsed = true;
             }
         }
 
