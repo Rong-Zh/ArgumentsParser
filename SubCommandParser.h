@@ -751,16 +751,13 @@ public:
             print_help();
             std::exit(EXIT_SUCCESS);
         }
-        for (int i = 1; i < argc; ++i)
-        {
-            std::string a = argv[i];
-            if (a == "--help" || a == "-h")
-            {
-                print_help();
-                std::exit(EXIT_SUCCESS);
-            }
-        }
+        // Everything after the subcommand belongs exclusively to the subcommand parser.
         std::string subcmd_name = argv[1];
+        if (subcmd_name == "-h" || subcmd_name == "--help")
+        {
+            print_help();
+            std::exit(EXIT_SUCCESS);
+        }
         if (subcmd_name == "help")
         {
             if (argc >= 3)
