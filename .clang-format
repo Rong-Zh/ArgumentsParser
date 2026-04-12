@@ -1,0 +1,18 @@
+---
+BasedOnStyle:              Google
+ColumnLimit:               120
+IndentWidth:               4
+AccessModifierOffset:      -2
+BreakTemplateDeclarations: Yes
+BraceWrapping:
+  AfterClass:            true
+  AfterControlStatement: Always
+  AfterEnum:             true
+  AfterFunction:         true
+  AfterNamespace:        true
+  AfterStruct:           true
+  BeforeCatch:           true
+  BeforeElse:            true
+BreakBeforeBraces:         Custom
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
