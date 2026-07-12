@@ -786,6 +786,13 @@ class SubCommandParser
         }
         // Everything after the subcommand belongs exclusively to the subcommand parser.
         std::string subcmd_name = argv[1];
+        if (version_enabled_ &&
+            ((version_short_opt_ != '\0' && subcmd_name == std::string("-") + version_short_opt_) ||
+             subcmd_name == std::string("--") + version_long_opt_))
+        {
+            print_version();
+            std::exit(EXIT_SUCCESS);
+        }
         if (subcmd_name == "-h" || subcmd_name == "--help")
         {
             print_help();
@@ -842,6 +849,16 @@ class SubCommandParser
             std::cout << "Version: " << version_ << "\n";
         }
         std::cout << "Usage: " << programname_ << " <command> [options]\n\n";
+        if (version_enabled_)
+        {
+            std::cout << "Options:\n";
+            if (version_short_opt_ != '\0')
+                std::cout << "  -" << version_short_opt_ << ", ";
+            else
+                std::cout << "      ";
+            std::cout << "--" << version_long_opt_ << "    " << version_help_ << "\n";
+            std::cout << "  -h, --help    Show help message\n\n";
+        }
         std::cout << "Commands:\n";
 
         size_t max_cmd_width = 0;
@@ -863,6 +880,8 @@ class SubCommandParser
         }
         std::cout << "See '" + programname_ + " help <command>' to read about a specific subcommand.\n";
     }
+
+    void print_version() const { std::cout << programname_ << " " << version_ << "\n"; }
 
     void print_subcommand_help(const std::string& subcmd_name)
     {
@@ -903,6 +922,16 @@ class SubCommandParser
     std::string get_description() const { return description_; }
     void set_version(const std::string& version) { version_ = version; }
     std::string get_version() const { return version_; }
+    void add_version(char short_opt = 'V', const std::string& long_opt = "version",
+                     const std::string& help = "Show version information")
+    {
+        if (long_opt.empty())
+            throw std::runtime_error("Long option cannot be empty.");
+        version_enabled_ = true;
+        version_short_opt_ = short_opt;
+        version_long_opt_ = long_opt;
+        version_help_ = help;
+    }
     void footnote(const std::string& note) { note_ = note; }
 
   private:
@@ -1211,6 +1240,10 @@ class SubCommandParser
     std::string description_;
     std::string current_command_;
     std::string version_;
+    bool version_enabled_ = false;
+    char version_short_opt_ = 'V';
+    std::string version_long_opt_ = "version";
+    std::string version_help_ = "Show version information";
     std::string note_;
     std::unordered_map<std::string, std::unique_ptr<Command>> commands_;
     std::vector<std::string> command_order_;

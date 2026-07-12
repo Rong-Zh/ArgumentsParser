@@ -104,6 +104,14 @@ TEST(SubCommand, OptionalNoDefault)
     EXPECT_NO_THROW(p.add_optional<std::string>('H', "host", "host address"));
 }
 
+TEST(SubCommand, VersionArgumentCanBeRegistered)
+{
+    SubCommandParser cmd("tool", "tool");
+    cmd.set_version("2.3.1");
+    EXPECT_NO_THROW(cmd.add_version());
+    EXPECT_EQ(cmd.get_version(), "2.3.1");
+}
+
 TEST(SubCommand, BasicInvocation)
 {
     s_sub_result = -9999;

@@ -488,6 +488,17 @@ TEST(Metadata, Version)
     EXPECT_EQ(p.get_version(), "2.3.1");
 }
 
+TEST(Metadata, VersionArgument)
+{
+    ArgumentParser p("prog", "test");
+    p.set_version("2.3.1");
+    p.add_version();
+
+    EXPECT_TRUE(p.exists('V'));
+    EXPECT_TRUE(p.exists("version"));
+    EXPECT_EQ(p.get_version(), "2.3.1");
+}
+
 TEST(Metadata, Description)
 {
     ArgumentParser p("prog", "initial");

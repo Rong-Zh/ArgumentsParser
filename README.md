@@ -47,6 +47,7 @@ int main(int argc, char *argv[])
 {
     ArgumentParser parser("myapp", "My application description");
     parser.set_version("1.0.0");
+    parser.add_version('V', "version", "Show version information");
 
     // Add required argument
     parser.add_required<int>("number", "An integer number");
@@ -61,7 +62,7 @@ int main(int argc, char *argv[])
     parser.add_positional<std::string>("input", "Input file");
     parser.add_positional<std::string>("output", "Output file");
     // Add help
-    parser.add_help('h', "--help", "Show help message");
+    parser.add_help('h', "help", "Show help message");
     
     parser.parse_args(argc, argv);
     int number = parser.get<int>("number");

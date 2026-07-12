@@ -152,6 +152,7 @@ class ArgumentBase
     bool was_parsed = false;   // true if the user supplied this argument on the command line
     bool deprecated = false;
     bool is_helparg = false;
+    bool is_versionarg = false;
     bool is_repeatable = false;
     bool is_variadic = false;  // true if this positional absorbs all remaining positional values
 
@@ -564,6 +565,13 @@ class ArgumentParser
         add_argument<bool>(short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), true);
     }
 
+    void add_version(char short_opt = 'V', const std::string& long_opt = "version",
+                     const std::string& help = "Show version information")
+    {
+        add_flag(short_opt, long_opt, help);
+        arguments_.at(long_opt)->is_versionarg = true;
+    }
+
     bool was_set(const std::string& name) const
     {
         auto it = arguments_.find(name);
@@ -627,6 +635,27 @@ class ArgumentParser
     {
         if (programname_.empty())
             programname_ = argv[0];
+
+        // Check for version flag before validating other arguments.
+        ArgumentBase* version_arg = get_versionarg();
+        if (version_arg != nullptr)
+        {
+            std::string short_opt;
+            if (version_arg->short_opt != '\0')
+                short_opt = std::string("-") + std::string(1, version_arg->short_opt);
+            const std::string long_opt = std::string("--") + version_arg->long_opt;
+
+            for (int i = 1; i < argc; ++i)
+            {
+                const std::string arg = argv[i];
+                if ((!short_opt.empty() && arg == short_opt) || arg == long_opt)
+                {
+                    print_version();
+                    std::exit(EXIT_SUCCESS);
+                }
+            }
+        }
+
         // Check for help flag if enabled
         ArgumentBase* args = get_helparg();
         if (args != nullptr)
@@ -858,6 +887,8 @@ class ArgumentParser
         }
     }
 
+    void print_version() const { std::cout << programname_ << " " << version_ << "\n"; }
+
     bool exists(const std::string& name) const { return arguments_.find(name) != arguments_.end(); }
 
     bool exists(const char short_opt) const
@@ -935,6 +966,16 @@ class ArgumentParser
         for (const auto& pair : arguments_)
         {
             if (pair.second->is_helparg)
+                return pair.second.get();
+        }
+        return nullptr;
+    }
+
+    ArgumentBase* get_versionarg() const
+    {
+        for (const auto& pair : arguments_)
+        {
+            if (pair.second->is_versionarg)
                 return pair.second.get();
         }
         return nullptr;
