@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <deque>
 #include <fstream>
@@ -18,12 +19,24 @@
 #include <utility>
 #include <vector>
 
+#ifndef ARGUMENTS_PARSER_BASE_TYPES_DEFINED
+#define ARGUMENTS_PARSER_BASE_TYPES_DEFINED
+
 enum class BoundType : uint8_t
 {
     Closed,
     Open,
     LeftOpen,
     RightOpen
+};
+
+enum class ArgType : uint8_t
+{
+    Required,
+    Optional,
+    Positional,
+    Flag,
+    RequiredPositional,
 };
 
 class File
@@ -42,9 +55,16 @@ class File
     operator std::string() const { return path; }
 };
 
+#endif
+
 // Internal implementation details — not part of the public API
-namespace detail
+namespace subcommand_detail
 {
+
+inline bool is_positional_type(ArgType type)
+{
+    return type == ArgType::Positional || type == ArgType::RequiredPositional;
+}
 
 inline bool startswith(const std::string& str, const std::string& prefix)
 {
@@ -76,7 +96,7 @@ inline bool is_longopt(const std::string& arg)
 
 inline bool is_shortopt(const std::string& arg)
 {
-    if (!startswith(arg, "-") || startswith(arg, "--"))
+    if (arg.size() < 2 || !startswith(arg, "-") || startswith(arg, "--"))
     {
         return false;
     }
@@ -86,6 +106,24 @@ inline bool is_shortopt(const std::string& arg)
         return false;
     }
     return true;
+}
+
+inline bool accepts_option_like_value(const std::string& type)
+{
+    return type == "string" || type == "file" || type == "string[]" || type == "file[]";
+}
+
+inline std::string constraint_expectation(std::string description)
+{
+    const size_t first = description.find_first_not_of(' ');
+    description = first == std::string::npos ? std::string() : description.substr(first);
+    const std::string range_prefix = "Range: ";
+    const std::string choices_prefix = "Choices: ";
+    if (description.compare(0, range_prefix.size(), range_prefix) == 0)
+        return "in range " + description.substr(range_prefix.size());
+    if (description.compare(0, choices_prefix.size(), choices_prefix) == 0)
+        return "one of " + description.substr(choices_prefix.size());
+    return "satisfying " + description;
 }
 
 template <typename T>
@@ -127,17 +165,12 @@ std::string into_string(const std::vector<T>& value)
     return result;
 }
 
-enum class ArgType : uint8_t
-{
-    Required,
-    Optional,
-    Positional,
-    Flag,
-};
-
 template <typename T>
 T parse_value(const std::string& str)
 {
+    const size_t first_non_space = str.find_first_not_of(" \t\n\r\f\v");
+    if (std::is_unsigned<T>::value && first_non_space != std::string::npos && str[first_non_space] == '-')
+        throw std::runtime_error("Failed to parse negative string " + str + " as unsigned type " + typeid(T).name());
     T value;
     std::istringstream iss(str);
     iss >> value;
@@ -145,21 +178,46 @@ T parse_value(const std::string& str)
     {
         throw std::runtime_error("Failed to parse string " + str + " as type " + typeid(T).name());
     }
+    iss >> std::ws;
+    if (!iss.eof())
+    {
+        throw std::runtime_error("Failed to parse string " + str + " as type " + typeid(T).name());
+    }
     return value;
+}
+
+template <>
+inline std::string parse_value<std::string>(const std::string& str)
+{
+    return str;
 }
 
 template <>
 inline bool parse_value<bool>(const std::string& str)
 {
-    if (str == "1" || str == "true" || str == "True" || str == "TRUE")
+    if (str == "1")
     {
         return true;
     }
-    if (str == "0" || str == "false" || str == "False" || str == "FALSE")
+    if (str == "0")
     {
         return false;
     }
-    throw std::runtime_error("Failed to parse string '" + str + "' as type bool");
+
+    std::string normalized = str;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    });
+    if (normalized == "true" || normalized == "yes" || normalized == "on")
+    {
+        return true;
+    }
+    if (normalized == "false" || normalized == "no" || normalized == "off")
+    {
+        return false;
+    }
+    throw std::runtime_error("Failed to parse string '" + str +
+                             "' as bool; expected true, false, yes, no, on, off, 1, or 0");
 }
 
 template <>
@@ -264,6 +322,7 @@ class Option
     virtual const std::type_info& get_type() const = 0;
     virtual std::string display_type() const = 0;
     virtual void* get_value() = 0;
+    virtual void reset() = 0;
 
     std::string label_type() const { return arg_type == ArgType::Flag ? "bool" : display_type(); }
 };
@@ -273,6 +332,7 @@ class OptionValueBase : public Option
 {
   public:
     T value;
+    T initial_value;
 
     std::string to_string() const override { return into_string(value); }
 
@@ -281,6 +341,18 @@ class OptionValueBase : public Option
     std::string display_type() const override { return TypeName<T>::name(); }
 
     void* get_value() override { return &value; }
+
+    void reset() override
+    {
+        value = initial_value;
+        this->was_parsed = false;
+    }
+
+    std::runtime_error value_error(const std::string& input) const
+    {
+        return std::runtime_error("Invalid value '" + input + "' for argument '--" + this->long_opt +
+                                  "': expected " + display_type() + ".");
+    }
 };
 
 template <typename T, typename U = void>
@@ -291,14 +363,31 @@ class Argument : public OptionValueBase<Argument<T, U>, T>
 
     void from_string(const std::string& str) override
     {
-        this->value = parse_value<T>(str);
-        if (!constraint.check(this->value))
+        try
         {
-            throw std::runtime_error("Parameter value does not satisfy constraints: " + this->to_string());
+            this->value = parse_value<T>(str);
         }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+        if (!constraint.check(this->value))
+            throw std::runtime_error("Invalid value '" + str + "' for argument '--" + this->long_opt +
+                                     "': expected " + this->display_type() + " " +
+                                     constraint_expectation(constraint.desc()) + ".");
     }
 
-    void append_repeatable(const std::string& str) override { append_repeatable_impl<T>(str); }
+    void append_repeatable(const std::string& str) override
+    {
+        try
+        {
+            append_repeatable_impl<T>(str);
+        }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+    }
 
   private:
     template <typename Q>
@@ -319,9 +408,29 @@ template <typename T>
 class Argument<T, void> : public OptionValueBase<Argument<T, void>, T>
 {
   public:
-    void from_string(const std::string& str) override { from_string_impl<T>(str); }
+    void from_string(const std::string& str) override
+    {
+        try
+        {
+            from_string_impl<T>(str);
+        }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+    }
 
-    void append_repeatable(const std::string& str) override { append_repeatable_impl<T>(str); }
+    void append_repeatable(const std::string& str) override
+    {
+        try
+        {
+            append_repeatable_impl<T>(str);
+        }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+    }
 
   private:
     template <typename Q>
@@ -351,8 +460,10 @@ class Argument<T, void> : public OptionValueBase<Argument<T, void>, T>
     }
 };
 
-}  // namespace detail
+}  // namespace subcommand_detail
 
+#ifndef ARGUMENTS_PARSER_API_TYPES_DEFINED
+#define ARGUMENTS_PARSER_API_TYPES_DEFINED
 template <typename T>
 class Range
 {
@@ -398,7 +509,7 @@ struct Choices
         std::string s = " Choices: {";
         for (size_t i = 0; i < values.size(); ++i)
         {
-            s += detail::into_string(values[i]);
+            s += subcommand_detail::into_string(values[i]);
             if (i + 1 < values.size())
             {
                 s += ", ";
@@ -424,17 +535,17 @@ class Expected
     bool has_value() const { return is_explicit; }
     T get() const { return value; }
 };
+#endif
 
 class ArgumentOptions
 {
     friend class SubCommandParser;
 
-    using ArgType = detail::ArgType;
-    using Option = detail::Option;
+    using Option = subcommand_detail::Option;
     template <typename T, typename U = void>
-    using Argument = detail::Argument<T, U>;
+    using Argument = subcommand_detail::Argument<T, U>;
     template <typename T>
-    using TypeName = detail::TypeName<T>;
+    using TypeName = subcommand_detail::TypeName<T>;
 
   public:
     ArgumentOptions() = default;
@@ -447,6 +558,12 @@ class ArgumentOptions
     void add_positional(const std::string& long_opt, const std::string& help)
     {
         add_argument<T>('\0', long_opt, ArgType::Positional, help, Expected<T>());
+    }
+
+    template <typename T>
+    void add_required_positional(const std::string& long_opt, const std::string& help)
+    {
+        add_argument<T>('\0', long_opt, ArgType::RequiredPositional, help, Expected<T>());
     }
 
     // Variadic positional: absorbs all remaining positional values into a vector<T>.
@@ -655,6 +772,19 @@ class ArgumentOptions
         return false;
     }
 
+    bool is_registered_option_token(const std::string& token) const
+    {
+        if (subcommand_detail::is_longopt(token))
+        {
+            std::string name = token.substr(2);
+            const size_t equals = name.find('=');
+            if (equals != std::string::npos)
+                name = name.substr(0, equals);
+            return arguments_.find(name) != arguments_.end();
+        }
+        return subcommand_detail::is_shortopt(token) && short_to_long_.find(token[1]) != short_to_long_.end();
+    }
+
     bool has_helparg() const { return get_helparg() != nullptr; }
 
     Option* get_helparg() const
@@ -675,6 +805,7 @@ class ArgumentOptions
         {
             std::unique_ptr<Argument<T>> arg(new Argument<T>());
             arg->value = expected;
+            arg->initial_value = expected;
             return arg;
         }
 
@@ -683,6 +814,7 @@ class ArgumentOptions
         {
             std::unique_ptr<Argument<T, U>> arg(new Argument<T, U>());
             arg->value = expected;
+            arg->initial_value = expected;
             arg->constraint = constraint;
             return arg;
         }
@@ -695,21 +827,43 @@ class ArgumentOptions
     {
         if (long_opt.empty())
             throw std::runtime_error("Long option cannot be empty.");
+        if (long_opt[0] == '-' || long_opt.find('=') != std::string::npos ||
+            std::find_if(long_opt.begin(), long_opt.end(), [](char c) {
+                return std::isspace(static_cast<unsigned char>(c)) != 0;
+            }) != long_opt.end())
+            throw std::runtime_error("Invalid long option name: '" + long_opt + "'.");
+        if (short_opt != '\0' &&
+            (short_opt == '-' || short_opt == '=' || !std::isprint(static_cast<unsigned char>(short_opt)) ||
+             std::isspace(static_cast<unsigned char>(short_opt))))
+            throw std::runtime_error("Invalid short option name.");
         if (short_opt != '\0' && exists(short_opt))
             throw std::runtime_error("Short option '" + std::string(1, short_opt) + "' already exists.");
         if (exists(long_opt))
             throw std::runtime_error("Long option '" + long_opt + "' already exists.");
+        if (type == ArgType::RequiredPositional)
+        {
+            for (const auto& name : positionals_)
+            {
+                if (!arguments_.at(name)->required)
+                    throw std::runtime_error("Required positional argument '" + long_opt +
+                                             "' cannot follow optional positional argument '" + name + "'.");
+            }
+        }
+        if (subcommand_detail::is_positional_type(type) && !positionals_.empty() &&
+            arguments_.at(positionals_.back())->is_variadic)
+            throw std::runtime_error("Cannot register positional argument '" + long_opt +
+                                     "' after variadic positional argument '" + positionals_.back() + "'.");
 
         arg->short_opt = short_opt;
         arg->long_opt = long_opt;
         arg->help = help;
         arg->arg_type = type;
-        arg->required = (type == ArgType::Required);
+        arg->required = (type == ArgType::Required || type == ArgType::RequiredPositional);
         arg->has_default = expected.has_value();
         arg->was_parsed = false;
         arg->is_helparg = is_helparg;
         arg->is_repeatable = is_repeatable;
-        if (type == ArgType::Positional)
+        if (subcommand_detail::is_positional_type(type))
             positionals_.push_back(long_opt);
         if (short_opt != '\0')
             short_to_long_[short_opt] = long_opt;
@@ -731,8 +885,10 @@ class ArgumentOptions
     {
         if (expected.has_value() && !constraint.check(expected.get()))
         {
-            throw std::runtime_error("Argument: '" + long_opt + "', value: " + detail::into_string(expected.get()) +
-                                     " does not satisfy constraint: " + constraint.desc());
+            throw std::runtime_error("Invalid default value '" + subcommand_detail::into_string(expected.get()) +
+                                     "' for argument '--" + long_opt + "': expected " +
+                                     subcommand_detail::TypeName<T>::name() + " " +
+                                     subcommand_detail::constraint_expectation(constraint.desc()) + ".");
         }
         add_argument_impl(Arg::argument(expected.get(), constraint), short_opt, long_opt, type,
                           help + constraint.desc(), expected);
@@ -751,6 +907,13 @@ class ArgumentOptions
 class SubCommandParser
 {
     using Callable = std::function<int(ArgumentOptions& parser)>;
+    enum class ParseResult
+    {
+        Success,
+        HelpRequested,
+        VersionRequested,
+        SubcommandHelpRequested
+    };
 
   public:
     SubCommandParser(const std::string& programname, const std::string& description)
@@ -762,6 +925,14 @@ class SubCommandParser
     {
         if (name.empty())
             throw std::runtime_error("Command name cannot be empty.");
+        if (name[0] == '-' || name.find('=') != std::string::npos ||
+            std::find_if(name.begin(), name.end(), [](char c) {
+                const unsigned char value = static_cast<unsigned char>(c);
+                return !std::isprint(value) || std::isspace(value);
+            }) != name.end())
+            throw std::runtime_error("Invalid command name: '" + name + "'.");
+        if (name == "help")
+            throw std::runtime_error("Command name 'help' is reserved.");
         if (commands_.find(name) != commands_.end())
             throw std::runtime_error("Command '" + name + "' already exists.");
         if (!callable)  // Check for empty std::function
@@ -777,26 +948,43 @@ class SubCommandParser
 
     void parse_args(int argc, char* argv[])
     {
+        current_command_.clear();
+        requested_subcommand_.clear();
+        const ParseResult result = parse_args_impl(argc, argv);
+        skip_execution_ = result != ParseResult::Success;
+        if (result == ParseResult::HelpRequested)
+            print_help();
+        else if (result == ParseResult::VersionRequested)
+            print_version();
+        else if (result == ParseResult::SubcommandHelpRequested)
+            print_subcommand_help(requested_subcommand_);
+    }
+
+  private:
+    ParseResult parse_args_impl(int argc, char* argv[])
+    {
+        if (argc <= 0 || argv == nullptr || argv[0] == nullptr)
+            throw std::runtime_error("Invalid argc/argv passed to parse_args.");
+        for (int i = 0; i < argc; ++i)
+        {
+            if (argv[i] == nullptr)
+                throw std::runtime_error("Invalid null argument in argv.");
+        }
         if (programname_.empty())
             programname_ = argv[0];
         if (argc < 2)
-        {
-            print_help();
-            std::exit(EXIT_SUCCESS);
-        }
+            return ParseResult::HelpRequested;
         // Everything after the subcommand belongs exclusively to the subcommand parser.
         std::string subcmd_name = argv[1];
         if (version_enabled_ &&
             ((version_short_opt_ != '\0' && subcmd_name == std::string("-") + version_short_opt_) ||
              subcmd_name == std::string("--") + version_long_opt_))
         {
-            print_version();
-            std::exit(EXIT_SUCCESS);
+            return ParseResult::VersionRequested;
         }
         if (subcmd_name == "-h" || subcmd_name == "--help")
         {
-            print_help();
-            std::exit(EXIT_SUCCESS);
+            return ParseResult::HelpRequested;
         }
         if (subcmd_name == "help")
         {
@@ -805,20 +993,17 @@ class SubCommandParser
                 std::string subcmd = argv[2];
                 if (commands_.find(subcmd) == commands_.end())
                 {
-                    throw std::runtime_error("Unknown subcommand: " + subcmd + "\n");
+                    throw std::runtime_error("Unknown subcommand: " + subcmd + available_commands_suffix());
                 }
-                print_subcommand_help(subcmd);
+                requested_subcommand_ = subcmd;
+                return ParseResult::SubcommandHelpRequested;
             }
-            else
-            {
-                print_help();
-            }
-            std::exit(EXIT_SUCCESS);
+            return ParseResult::HelpRequested;
         }
 
         if (commands_.find(subcmd_name) == commands_.end())
         {
-            throw std::runtime_error("Unknown subcommand: " + subcmd_name + "\n");
+            throw std::runtime_error("Unknown subcommand: " + subcmd_name + available_commands_suffix());
         }
         // Check if all arguments are optional
         auto& cmd = commands_[subcmd_name];
@@ -826,15 +1011,24 @@ class SubCommandParser
         if (argc < 3 && (parser.has_required() || parser.has_helparg()))
         {
             // No arguments provided, show help
-            print_subcommand_help(subcmd_name);
-            std::exit(EXIT_SUCCESS);
+            requested_subcommand_ = subcmd_name;
+            return ParseResult::SubcommandHelpRequested;
         }
-        parse_args(subcmd_name, argc - 1, argv + 1);
+        const ParseResult subcommand_result = parse_subcommand_args(subcmd_name, argc - 1, argv + 1);
+        if (subcommand_result != ParseResult::Success)
+        {
+            requested_subcommand_ = subcmd_name;
+            return subcommand_result;
+        }
         current_command_ = subcmd_name;
+        return ParseResult::Success;
     }
 
+  public:
     int execute()
     {
+        if (skip_execution_)
+            return 0;
         if (current_command_.empty())
             throw std::runtime_error("Error: No command selected (did you call parse_args?)");
         auto& cmd = commands_[current_command_];
@@ -849,16 +1043,16 @@ class SubCommandParser
             std::cout << "Version: " << version_ << "\n";
         }
         std::cout << "Usage: " << programname_ << " <command> [options]\n\n";
+        std::cout << "Options:\n";
         if (version_enabled_)
         {
-            std::cout << "Options:\n";
             if (version_short_opt_ != '\0')
                 std::cout << "  -" << version_short_opt_ << ", ";
             else
                 std::cout << "      ";
             std::cout << "--" << version_long_opt_ << "    " << version_help_ << "\n";
-            std::cout << "  -h, --help    Show help message\n\n";
         }
+        std::cout << "  -h, --help    Show help message\n\n";
         std::cout << "Commands:\n";
 
         size_t max_cmd_width = 0;
@@ -902,7 +1096,9 @@ class SubCommandParser
         for (const auto& name : parser.positionals_)
         {
             const bool variadic = parser.arguments_.count(name) && parser.arguments_.at(name)->is_variadic;
-            std::cout << " <" << name << (variadic ? "..." : "") << ">";
+            const bool required = parser.arguments_.at(name)->required;
+            std::cout << (required ? " <" : " [") << name << (variadic ? "..." : "")
+                      << (required ? ">" : "]");
         }
         std::cout << "\n\n";
 
@@ -927,6 +1123,17 @@ class SubCommandParser
     {
         if (long_opt.empty())
             throw std::runtime_error("Long option cannot be empty.");
+        if (long_opt[0] == '-' || long_opt.find('=') != std::string::npos ||
+            std::find_if(long_opt.begin(), long_opt.end(), [](char c) {
+                return std::isspace(static_cast<unsigned char>(c)) != 0;
+            }) != long_opt.end())
+            throw std::runtime_error("Invalid long option name: '" + long_opt + "'.");
+        if (short_opt != '\0' &&
+            (short_opt == '-' || short_opt == '=' || !std::isprint(static_cast<unsigned char>(short_opt)) ||
+             std::isspace(static_cast<unsigned char>(short_opt))))
+            throw std::runtime_error("Invalid short option name.");
+        if (short_opt == 'h' || long_opt == "help")
+            throw std::runtime_error("Version option conflicts with the built-in help option.");
         version_enabled_ = true;
         version_short_opt_ = short_opt;
         version_long_opt_ = long_opt;
@@ -935,8 +1142,27 @@ class SubCommandParser
     void footnote(const std::string& note) { note_ = note; }
 
   private:
-    using ArgType = detail::ArgType;
-    using Option = detail::Option;
+    using Option = subcommand_detail::Option;
+
+    std::string available_commands_suffix() const
+    {
+        if (command_order_.empty())
+            return ".";
+        std::string result = ". Available commands: ";
+        for (size_t i = 0; i < command_order_.size(); ++i)
+        {
+            if (i != 0)
+                result += ", ";
+            result += command_order_[i];
+        }
+        return result + ".";
+    }
+
+    static void reject_duplicate(const Option* argument)
+    {
+        if (argument->was_parsed && !argument->is_repeatable)
+            throw std::runtime_error("Argument '--" + argument->long_opt + "' was provided more than once.");
+    }
 
     void print_argument_sections(ArgumentOptions& parser)
     {
@@ -957,7 +1183,7 @@ class SubCommandParser
         for (const auto& name : display_order)
         {
             const Option* arg = arguments.at(name).get();
-            if (arg->arg_type == ArgType::Positional)
+            if (subcommand_detail::is_positional_type(arg->arg_type))
                 continue;
             std::string opt_str;
             if (arg->short_opt != '\0')
@@ -979,7 +1205,7 @@ class SubCommandParser
             for (const auto& name : display_order)
             {
                 const Option* arg = arguments.at(name).get();
-                if (arg->arg_type != ArgType::Positional && arg->required == req)
+                if (!subcommand_detail::is_positional_type(arg->arg_type) && arg->required == req)
                 {
                     has_any = true;
                     break;
@@ -994,7 +1220,7 @@ class SubCommandParser
             for (const auto& name : display_order)
             {
                 const Option* arg = arguments.at(name).get();
-                if (arg->arg_type == ArgType::Positional || arg->required != req)
+                if (subcommand_detail::is_positional_type(arg->arg_type) || arg->required != req)
                     continue;
 
                 std::cout << "  ";
@@ -1019,32 +1245,40 @@ class SubCommandParser
             }
             std::cout << "\n";
         }
+
+        if (!parser.positionals_.empty())
+        {
+            size_t name_width = 0;
+            size_t type_width = 0;
+            for (const auto& name : parser.positionals_)
+            {
+                const Option* argument = arguments.at(name).get();
+                name_width = std::max(name_width, name.length() + (argument->is_variadic ? 3U : 0U));
+                type_width = std::max(type_width, argument->display_type().length());
+            }
+
+            std::cout << "Positional arguments:\n";
+            for (const auto& name : parser.positionals_)
+            {
+                const Option* argument = arguments.at(name).get();
+                const std::string display_name = name + (argument->is_variadic ? "..." : "");
+                std::cout << "  " << std::setw(name_width) << std::left << display_name << "    "
+                          << std::setw(type_width) << std::left << argument->display_type() << "    " << argument->help
+                          << "\n";
+            }
+            std::cout << "\n";
+        }
     }
 
-    void parse_args(std::string subcmd_name, int argc, char* argv[])
+    ParseResult parse_subcommand_args(const std::string& subcmd_name, int argc, char* argv[])
     {
         auto& cmd = commands_[subcmd_name];
         ArgumentOptions& parser = *cmd->parser;
 
-        // Check for help flag if enabled
-        Option* help_arg = parser.get_helparg();
-        if (help_arg != nullptr)
-        {
-            std::string help_short;
-            if (help_arg->short_opt != '\0')
-                help_short = std::string("-") + std::string(1, help_arg->short_opt);
-            std::string help_long = std::string("--") + help_arg->long_opt;
+        for (auto& pair : parser.arguments_)
+            pair.second->reset();
 
-            for (int i = 1; i < argc; ++i)
-            {
-                std::string a = argv[i];
-                if ((!help_short.empty() && a == help_short) || a == help_long)
-                {
-                    print_subcommand_help(subcmd_name);
-                    std::exit(EXIT_SUCCESS);
-                }
-            }
-        }
+        Option* help_arg = parser.get_helparg();
 
         std::vector<std::string> positional_values;
         bool end_of_opts = false;
@@ -1062,12 +1296,13 @@ class SubCommandParser
                 positional_values.push_back(arg);
                 continue;
             }
-            if (detail::is_longopt(arg))
+            if (subcommand_detail::is_longopt(arg))
             {
                 std::string opt_name = arg.substr(2);
                 std::string value;
                 size_t eq_pos = opt_name.find('=');
-                if (eq_pos != std::string::npos)
+                const bool has_inline_value = eq_pos != std::string::npos;
+                if (has_inline_value)
                 {
                     value = opt_name.substr(eq_pos + 1);
                     opt_name = opt_name.substr(0, eq_pos);
@@ -1081,16 +1316,31 @@ class SubCommandParser
                 if (argument->deprecated)
                     throw std::runtime_error("Argument '--" + opt_name + "' is deprecated and cannot be used.");
 
+                if (argument == help_arg)
+                {
+                    if (has_inline_value)
+                        throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
+                    return ParseResult::SubcommandHelpRequested;
+                }
+
+                reject_duplicate(argument);
+
                 if (argument->arg_type == ArgType::Flag)
                 {
+                    if (has_inline_value)
+                        throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
                     argument->from_string("true");
                 }
                 else
                 {
-                    if (value.empty())
+                    if (!has_inline_value)
                     {
                         if (i + 1 >= argc)
                             throw std::runtime_error("Argument --" + opt_name + " requires a value");
+                        if (!subcommand_detail::accepts_option_like_value(argument->display_type()) &&
+                            parser.is_registered_option_token(argv[i + 1]))
+                            throw std::runtime_error("Argument '--" + opt_name + "' requires a value before '" +
+                                                     std::string(argv[i + 1]) + "'.");
                         value = argv[++i];
                     }
                     if (argument->is_repeatable)
@@ -1104,7 +1354,7 @@ class SubCommandParser
                 }
                 argument->was_parsed = true;
             }
-            else if (detail::is_shortopt(arg))
+            else if (subcommand_detail::is_shortopt(arg))
             {
                 if (arg.size() > 2)
                 {
@@ -1123,6 +1373,7 @@ class SubCommandParser
                     // if the first argument is not a flag, value follows the short letter
                     if (first_argument->arg_type != ArgType::Flag)
                     {
+                        reject_duplicate(first_argument);
                         std::string value = arg.substr(2);
                         if (first_argument->is_repeatable)
                         {
@@ -1151,6 +1402,11 @@ class SubCommandParser
                                 throw std::runtime_error(std::string("Unknown short flag: -") + sopt);
                             if (argument->arg_type != ArgType::Flag)
                                 throw std::runtime_error(std::string("Only flag arguments can be merged: -") + sopt);
+                            reject_duplicate(argument);
+                            if (argument == help_arg)
+                            {
+                                return ParseResult::SubcommandHelpRequested;
+                            }
                             argument->from_string("true");
                             argument->was_parsed = true;
                         }
@@ -1170,8 +1426,14 @@ class SubCommandParser
                     if (!argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + sopt);
 
+                    reject_duplicate(argument);
+
                     if (argument->arg_type == ArgType::Flag)
                     {
+                        if (argument == help_arg)
+                        {
+                            return ParseResult::SubcommandHelpRequested;
+                        }
                         argument->from_string("true");
                         argument->was_parsed = true;
                     }
@@ -1179,6 +1441,10 @@ class SubCommandParser
                     {
                         if (i + 1 >= argc)
                             throw std::runtime_error(std::string("Argument -") + sopt + " requires a value");
+                        if (!subcommand_detail::accepts_option_like_value(argument->display_type()) &&
+                            parser.is_registered_option_token(argv[i + 1]))
+                            throw std::runtime_error(std::string("Argument '-") + sopt +
+                                                     "' requires a value before '" + argv[i + 1] + "'.");
                         std::string value = argv[++i];
                         if (argument->is_repeatable)
                         {
@@ -1221,12 +1487,19 @@ class SubCommandParser
             }
         }
 
+        if (positional_values.size() > positionals.size() &&
+            (positionals.empty() || !parser.arguments_.at(positionals.back())->is_variadic))
+        {
+            throw std::runtime_error("Unexpected positional argument: " + positional_values[positionals.size()]);
+        }
+
         // check required arguments
         for (const auto& pair : parser.arguments_)
         {
             if (pair.second->required && !pair.second->was_parsed)
                 throw std::runtime_error("Required argument missing: " + pair.first);
         }
+        return ParseResult::Success;
     }
 
     struct Command
@@ -1239,8 +1512,10 @@ class SubCommandParser
     std::string programname_;
     std::string description_;
     std::string current_command_;
+    std::string requested_subcommand_;
     std::string version_;
     bool version_enabled_ = false;
+    bool skip_execution_ = false;
     char version_short_opt_ = 'V';
     std::string version_long_opt_ = "version";
     std::string version_help_ = "Show version information";

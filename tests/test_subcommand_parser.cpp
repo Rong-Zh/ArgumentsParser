@@ -72,6 +72,21 @@ TEST(SubCommand, EndOfOptsMarker)
     EXPECT_EQ(captured_output, "also-positional");
 }
 
+TEST(SubCommand, SingleDashIsPositional)
+{
+    std::string captured;
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [&captured](ArgumentOptions &args) {
+        captured = args.get<std::string>("input");
+        return 0;
+    });
+    p.add_positional<std::string>("input", "input");
+    Args a({"tool", "run", "-"});
+    cmd.parse_args(a.argc(), a.argv());
+    EXPECT_EQ(cmd.execute(), 0);
+    EXPECT_EQ(captured, "-");
+}
+
 TEST(SubCommand, VariadicPositional)
 {
     static std::vector<std::string> captured_files;
@@ -112,6 +127,47 @@ TEST(SubCommand, VersionArgumentCanBeRegistered)
     EXPECT_EQ(cmd.get_version(), "2.3.1");
 }
 
+TEST(SubCommand, MainHelpListsHelpWithoutVersion)
+{
+    SubCommandParser cmd("tool", "tool");
+    Args a({"tool", "--help"});
+    testing::internal::CaptureStdout();
+    cmd.parse_args(a.argc(), a.argv());
+    const std::string output = testing::internal::GetCapturedStdout();
+    EXPECT_NE(output.find("--help"), std::string::npos);
+}
+
+TEST(SubCommand, VersionRejectsInvalidNames)
+{
+    SubCommandParser cmd("tool", "tool");
+    EXPECT_THROW(cmd.add_version('-', "version"), std::runtime_error);
+    EXPECT_THROW(cmd.add_version('V', "--version"), std::runtime_error);
+    EXPECT_THROW(cmd.add_version('V', "bad=name"), std::runtime_error);
+    EXPECT_THROW(cmd.add_version('h', "version"), std::runtime_error);
+    EXPECT_THROW(cmd.add_version('V', "help"), std::runtime_error);
+}
+
+TEST(SubCommand, HelpReturnsWithoutExecutingCommand)
+{
+    bool called = false;
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [&called](ArgumentOptions &) {
+        called = true;
+        return 0;
+    });
+    p.add_positional_variadic<std::string>("files", "input files");
+    p.add_help();
+    Args a({"tool", "run", "--help"});
+    testing::internal::CaptureStdout();
+    EXPECT_NO_THROW(cmd.parse_args(a.argc(), a.argv()));
+    const std::string output = testing::internal::GetCapturedStdout();
+    EXPECT_NE(output.find("Usage:"), std::string::npos);
+    EXPECT_NE(output.find("Positional arguments:"), std::string::npos);
+    EXPECT_NE(output.find("files..."), std::string::npos);
+    EXPECT_EQ(cmd.execute(), 0);
+    EXPECT_FALSE(called);
+}
+
 TEST(SubCommand, BasicInvocation)
 {
     s_sub_result = -9999;
@@ -128,8 +184,17 @@ TEST(SubCommand, BasicInvocation)
 TEST(SubCommand, UnknownSubcommandThrows)
 {
     SubCommandParser cmd("calc", "calculator");
+    cmd.add_subcommand("add", "add", sub_add_fn);
     Args a({"calc", "nonexistent"});
-    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+    try
+    {
+        cmd.parse_args(a.argc(), a.argv());
+        FAIL() << "Expected unknown subcommand failure";
+    }
+    catch (const std::runtime_error& error)
+    {
+        EXPECT_NE(std::string(error.what()).find("Available commands: add"), std::string::npos);
+    }
 }
 
 TEST(SubCommand, MultipleSubcommands)
@@ -195,6 +260,206 @@ TEST(SubCommand, RepeatableArgInSubcommand)
     ASSERT_EQ(s_captured_fields.size(), static_cast<size_t>(2));
     EXPECT_EQ(s_captured_fields[0], "db1:bed:col1");
     EXPECT_EQ(s_captured_fields[1], "db2:vcf:col2");
+}
+
+TEST(SubCommandEdgeCases, EmptyInlineValueIsPreserved)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<std::string>('n', "name", "name", "default");
+    Args a({"tool", "run", "--name="});
+    cmd.parse_args(a.argc(), a.argv());
+    EXPECT_EQ(p.get<std::string>("name"), "");
+}
+
+TEST(SubCommandEdgeCases, FlagWithInlineValueThrows)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_flag('v', "verbose", "verbose");
+    Args a({"tool", "run", "--verbose=false"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(SubCommandEdgeCases, ExtraPositionalThrows)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_positional<std::string>("input", "input");
+    Args a({"tool", "run", "one", "two"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(SubCommandEdgeCases, NumericTrailingCharactersThrow)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<int>('n', "number", "number", 0);
+    Args a({"tool", "run", "--number", "123abc"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(SubCommandEdgeCases, ConversionErrorContainsArgumentContext)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<int>('n', "number", "number", 0);
+    Args a({"tool", "run", "--number", "abc"});
+    try
+    {
+        cmd.parse_args(a.argc(), a.argv());
+        FAIL() << "Expected parse failure";
+    }
+    catch (const std::runtime_error& error)
+    {
+        const std::string message = error.what();
+        EXPECT_EQ(message, "Invalid value 'abc' for argument '--number': expected int.");
+    }
+}
+
+TEST(SubCommandEdgeCases, MissingNumericValueBeforeRegisteredOption)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<int>('p', "port", "port", 80);
+    p.add_flag('v', "verbose", "verbose");
+    Args a({"tool", "run", "--port", "--verbose"});
+    try
+    {
+        cmd.parse_args(a.argc(), a.argv());
+        FAIL() << "Expected missing value failure";
+    }
+    catch (const std::runtime_error& error)
+    {
+        EXPECT_EQ(std::string(error.what()), "Argument '--port' requires a value before '--verbose'.");
+    }
+}
+
+TEST(SubCommandEdgeCases, BoolMixedCaseVariants)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<bool>('f', "flag", "flag", false);
+    Args a({"tool", "run", "--flag", "yEs"});
+    cmd.parse_args(a.argc(), a.argv());
+    EXPECT_TRUE(p.get<bool>("flag"));
+}
+
+TEST(SubCommandEdgeCases, HelpLikeValueIsNotSpecial)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<std::string>('o', "output", "output", "default");
+    p.add_help();
+    Args a({"tool", "run", "--output", "--help"});
+    cmd.parse_args(a.argc(), a.argv());
+    EXPECT_EQ(p.get<std::string>("output"), "--help");
+}
+
+TEST(SubCommandRegistration, RejectsInvalidOptionNames)
+{
+    ArgumentOptions p;
+    EXPECT_THROW(p.add_flag('-', "bad", "bad"), std::runtime_error);
+    EXPECT_THROW(p.add_flag("bad=name", "bad"), std::runtime_error);
+    EXPECT_THROW(p.add_flag("--bad", "bad"), std::runtime_error);
+    EXPECT_THROW(p.add_flag("bad name", "bad"), std::runtime_error);
+}
+
+TEST(SubCommandRegistration, RejectsInvalidCommandNames)
+{
+    SubCommandParser cmd("tool", "tool");
+    const auto callback = [](ArgumentOptions &) { return 0; };
+    EXPECT_THROW(cmd.add_subcommand("", "empty", callback), std::runtime_error);
+    EXPECT_THROW(cmd.add_subcommand("--run", "bad", callback), std::runtime_error);
+    EXPECT_THROW(cmd.add_subcommand("bad=name", "bad", callback), std::runtime_error);
+    EXPECT_THROW(cmd.add_subcommand("bad name", "bad", callback), std::runtime_error);
+    EXPECT_THROW(cmd.add_subcommand("help", "reserved", callback), std::runtime_error);
+}
+
+TEST(SubCommandRegistration, CannotRegisterAfterVariadic)
+{
+    ArgumentOptions p;
+    p.add_positional_variadic<std::string>("files", "files");
+    EXPECT_THROW(p.add_positional<std::string>("output", "output"), std::runtime_error);
+}
+
+TEST(SubCommandRegistration, RequiredPositional)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_required_positional<std::string>("input", "input");
+    Args valid({"tool", "run", "file.txt"});
+    EXPECT_NO_THROW(cmd.parse_args(valid.argc(), valid.argv()));
+    EXPECT_EQ(p.get<std::string>("input"), "file.txt");
+}
+
+TEST(SubCommandRegistration, RequiredCannotFollowOptional)
+{
+    ArgumentOptions p;
+    p.add_positional<std::string>("output", "output");
+    EXPECT_THROW(p.add_required_positional<std::string>("input", "input"), std::runtime_error);
+}
+
+TEST(SubCommandParse, RepeatedParseResetsValues)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<int>('n', "number", "number", 7);
+    p.add_flag('v', "verbose", "verbose");
+    p.add_repeatable<std::string>('t', "tag", "tag");
+
+    Args first({"tool", "run", "--number", "9", "-v", "-t", "one"});
+    cmd.parse_args(first.argc(), first.argv());
+    EXPECT_EQ(p.get<int>("number"), 9);
+    EXPECT_TRUE(p.get<bool>("verbose"));
+
+    Args second({"tool", "run", "-t", "two"});
+    cmd.parse_args(second.argc(), second.argv());
+    EXPECT_EQ(p.get<int>("number"), 7);
+    EXPECT_FALSE(p.get<bool>("verbose"));
+    EXPECT_EQ(p.get<std::vector<std::string>>("tag"), std::vector<std::string>({"two"}));
+}
+
+TEST(SubCommandParse, RejectsInvalidArgv)
+{
+    SubCommandParser cmd("tool", "tool");
+    EXPECT_THROW(cmd.parse_args(0, nullptr), std::runtime_error);
+}
+
+TEST(SubCommandParse, UnsignedRejectsNegativeValue)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<unsigned int>('n', "number", "number", 0U);
+    Args a({"tool", "run", "--number=-1"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(SubCommandParse, DuplicateOptionThrows)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<int>('p', "port", "port", 80);
+    Args a({"tool", "run", "--port", "8000", "--port", "9000"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(SubCommandParse, DuplicateAcrossShortAndLongThrows)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_optional<int>('p', "port", "port", 80);
+    Args a({"tool", "run", "-p", "8000", "--port", "9000"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(SubCommandParse, DuplicateFlagThrows)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_flag('v', "verbose", "verbose");
+    Args a({"tool", "run", "-v", "--verbose"});
+    EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 int main(int argc, char **argv)

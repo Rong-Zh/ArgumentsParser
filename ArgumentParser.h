@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <deque>
 #include <fstream>
@@ -18,12 +19,24 @@
 #include <utility>
 #include <vector>
 
+#ifndef ARGUMENTS_PARSER_BASE_TYPES_DEFINED
+#define ARGUMENTS_PARSER_BASE_TYPES_DEFINED
+
 enum class BoundType : uint8_t
 {
     Closed,
     Open,
     LeftOpen,
     RightOpen
+};
+
+enum class ArgType : uint8_t
+{
+    Required,
+    Optional,
+    Positional,
+    Flag,
+    RequiredPositional,
 };
 
 class File
@@ -42,8 +55,15 @@ class File
     operator std::string() const { return path; }
 };
 
+#endif
+
 namespace detail
 {
+
+inline bool is_positional_type(ArgType type)
+{
+    return type == ArgType::Positional || type == ArgType::RequiredPositional;
+}
 
 inline bool startswith(const std::string& str, const std::string& prefix)
 {
@@ -75,7 +95,7 @@ inline bool is_longopt(const std::string& arg)
 
 inline bool is_shortopt(const std::string& arg)
 {
-    if (!startswith(arg, "-") || startswith(arg, "--"))
+    if (arg.size() < 2 || !startswith(arg, "-") || startswith(arg, "--"))
     {
         return false;
     }
@@ -85,6 +105,24 @@ inline bool is_shortopt(const std::string& arg)
         return false;
     }
     return true;
+}
+
+inline bool accepts_option_like_value(const std::string& type)
+{
+    return type == "string" || type == "file" || type == "string[]" || type == "file[]";
+}
+
+inline std::string constraint_expectation(std::string description)
+{
+    const size_t first = description.find_first_not_of(' ');
+    description = first == std::string::npos ? std::string() : description.substr(first);
+    const std::string range_prefix = "Range: ";
+    const std::string choices_prefix = "Choices: ";
+    if (description.compare(0, range_prefix.size(), range_prefix) == 0)
+        return "in range " + description.substr(range_prefix.size());
+    if (description.compare(0, choices_prefix.size(), choices_prefix) == 0)
+        return "one of " + description.substr(choices_prefix.size());
+    return "satisfying " + description;
 }
 
 template <typename T>
@@ -126,14 +164,6 @@ std::string into_string(const std::vector<T>& value)
     return result;
 }
 
-enum class ArgType : uint8_t
-{
-    Required,
-    Optional,
-    Positional,
-    Flag,
-};
-
 class ArgumentBase
 {
   public:
@@ -162,6 +192,7 @@ class ArgumentBase
     virtual const std::type_info& get_type() const = 0;
     virtual std::string display_type() const = 0;
     virtual void* get_value() = 0;
+    virtual void reset() = 0;
 
     std::string label_type() const { return arg_type == ArgType::Flag ? "bool" : display_type(); }
 };
@@ -169,6 +200,9 @@ class ArgumentBase
 template <typename T>
 T parse_value(const std::string& str)
 {
+    const size_t first_non_space = str.find_first_not_of(" \t\n\r\f\v");
+    if (std::is_unsigned<T>::value && first_non_space != std::string::npos && str[first_non_space] == '-')
+        throw std::runtime_error("Failed to parse negative string " + str + " as unsigned type " + typeid(T).name());
     T value;
     std::istringstream iss(str);
     iss >> value;
@@ -176,21 +210,46 @@ T parse_value(const std::string& str)
     {
         throw std::runtime_error("Failed to parse string " + str + " as type " + typeid(T).name());
     }
+    iss >> std::ws;
+    if (!iss.eof())
+    {
+        throw std::runtime_error("Failed to parse string " + str + " as type " + typeid(T).name());
+    }
     return value;
+}
+
+template <>
+inline std::string parse_value<std::string>(const std::string& str)
+{
+    return str;
 }
 
 template <>
 inline bool parse_value<bool>(const std::string& str)
 {
-    if (str == "1" || str == "true" || str == "True" || str == "TRUE")
+    if (str == "1")
     {
         return true;
     }
-    if (str == "0" || str == "false" || str == "False" || str == "FALSE")
+    if (str == "0")
     {
         return false;
     }
-    throw std::runtime_error("Failed to parse string '" + str + "' as type bool");
+
+    std::string normalized = str;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    });
+    if (normalized == "true" || normalized == "yes" || normalized == "on")
+    {
+        return true;
+    }
+    if (normalized == "false" || normalized == "no" || normalized == "off")
+    {
+        return false;
+    }
+    throw std::runtime_error("Failed to parse string '" + str +
+                             "' as bool; expected true, false, yes, no, on, off, 1, or 0");
 }
 
 template <>
@@ -273,6 +332,7 @@ class ArgumentValueBase : public ArgumentBase
 {
   public:
     T value;
+    T initial_value;
 
     std::string to_string() const override { return into_string(value); }
 
@@ -281,6 +341,18 @@ class ArgumentValueBase : public ArgumentBase
     std::string display_type() const override { return TypeName<T>::name(); }
 
     void* get_value() override { return &value; }
+
+    void reset() override
+    {
+        value = initial_value;
+        this->was_parsed = false;
+    }
+
+    std::runtime_error value_error(const std::string& input) const
+    {
+        return std::runtime_error("Invalid value '" + input + "' for argument '--" + this->long_opt +
+                                  "': expected " + display_type() + ".");
+    }
 };
 
 template <typename T, typename U = void>
@@ -291,14 +363,31 @@ class Argument : public ArgumentValueBase<Argument<T, U>, T>
 
     void from_string(const std::string& str) override
     {
-        this->value = parse_value<T>(str);
-        if (!constraint.check(this->value))
+        try
         {
-            throw std::runtime_error("Parameter value does not satisfy constraints: " + this->to_string());
+            this->value = parse_value<T>(str);
         }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+        if (!constraint.check(this->value))
+            throw std::runtime_error("Invalid value '" + str + "' for argument '--" + this->long_opt +
+                                     "': expected " + this->display_type() + " " +
+                                     constraint_expectation(constraint.desc()) + ".");
     }
 
-    void append_repeatable(const std::string& str) override { append_repeatable_impl<T>(str); }
+    void append_repeatable(const std::string& str) override
+    {
+        try
+        {
+            append_repeatable_impl<T>(str);
+        }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+    }
 
   private:
     template <typename Q>
@@ -319,9 +408,29 @@ template <typename T>
 class Argument<T, void> : public ArgumentValueBase<Argument<T, void>, T>
 {
   public:
-    void from_string(const std::string& str) override { from_string_impl<T>(str); }
+    void from_string(const std::string& str) override
+    {
+        try
+        {
+            from_string_impl<T>(str);
+        }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+    }
 
-    void append_repeatable(const std::string& str) override { append_repeatable_impl<T>(str); }
+    void append_repeatable(const std::string& str) override
+    {
+        try
+        {
+            append_repeatable_impl<T>(str);
+        }
+        catch (const std::exception&)
+        {
+            throw this->value_error(str);
+        }
+    }
 
   private:
     template <typename Q>
@@ -353,6 +462,8 @@ class Argument<T, void> : public ArgumentValueBase<Argument<T, void>, T>
 
 }  // namespace detail
 
+#ifndef ARGUMENTS_PARSER_API_TYPES_DEFINED
+#define ARGUMENTS_PARSER_API_TYPES_DEFINED
 template <typename T>
 class Range
 {
@@ -424,11 +535,18 @@ class Expected
     bool has_value() const { return is_explicit; }
     T get() const { return value; }
 };
+#endif
 
 class ArgumentParser
 {
+    enum class ParseResult
+    {
+        Success,
+        HelpRequested,
+        VersionRequested
+    };
+
     // Implementation detail aliases — not part of the public API
-    using ArgType = detail::ArgType;
     using ArgumentBase = detail::ArgumentBase;
     template <typename T, typename U = void>
     using Argument = detail::Argument<T, U>;
@@ -456,8 +574,9 @@ class ArgumentParser
     {
         if (expected.has_value() && !constraint.check(expected.get()))
         {
-            throw std::runtime_error("Argument: '" + long_opt + "', value: " + detail::into_string(expected.get()) +
-                                     " does not satisfy constraint: " + constraint.desc());
+            throw std::runtime_error("Invalid default value '" + detail::into_string(expected.get()) +
+                                     "' for argument '--" + long_opt + "': expected " + detail::TypeName<T>::name() +
+                                     " " + detail::constraint_expectation(constraint.desc()) + ".");
         }
         add_argument_impl(Arg::argument(expected.get(), constraint), short_opt, long_opt, type,
                           help + constraint.desc(), expected);
@@ -467,6 +586,12 @@ class ArgumentParser
     void add_positional(const std::string& long_opt, const std::string& help)
     {
         add_argument<T>('\0', long_opt, ArgType::Positional, help, Expected<T>());
+    }
+
+    template <typename T>
+    void add_required_positional(const std::string& long_opt, const std::string& help)
+    {
+        add_argument<T>('\0', long_opt, ArgType::RequiredPositional, help, Expected<T>());
     }
 
     // Variadic positional: absorbs all remaining positional values into a vector<T>.
@@ -633,55 +758,37 @@ class ArgumentParser
 
     void parse_args(int argc, char* argv[])
     {
+        const ParseResult result = parse_args_impl(argc, argv);
+        if (result == ParseResult::HelpRequested)
+            print_help();
+        else if (result == ParseResult::VersionRequested)
+            print_version();
+    }
+
+  private:
+    ParseResult parse_args_impl(int argc, char* argv[])
+    {
+        if (argc <= 0 || argv == nullptr || argv[0] == nullptr)
+            throw std::runtime_error("Invalid argc/argv passed to parse_args.");
+        for (int i = 0; i < argc; ++i)
+        {
+            if (argv[i] == nullptr)
+                throw std::runtime_error("Invalid null argument in argv.");
+        }
         if (programname_.empty())
             programname_ = argv[0];
 
-        // Check for version flag before validating other arguments.
+        for (auto& pair : arguments_)
+            pair.second->reset();
+
         ArgumentBase* version_arg = get_versionarg();
-        if (version_arg != nullptr)
-        {
-            std::string short_opt;
-            if (version_arg->short_opt != '\0')
-                short_opt = std::string("-") + std::string(1, version_arg->short_opt);
-            const std::string long_opt = std::string("--") + version_arg->long_opt;
-
-            for (int i = 1; i < argc; ++i)
-            {
-                const std::string arg = argv[i];
-                if ((!short_opt.empty() && arg == short_opt) || arg == long_opt)
-                {
-                    print_version();
-                    std::exit(EXIT_SUCCESS);
-                }
-            }
-        }
-
-        // Check for help flag if enabled
-        ArgumentBase* args = get_helparg();
-        if (args != nullptr)
-        {
-            std::string short_opt;
-            if (args->short_opt != '\0')
-                short_opt = std::string("-") + std::string(1, args->short_opt);
-            std::string long_opt = std::string("--") + args->long_opt;
-
-            for (int i = 1; i < argc; ++i)
-            {
-                std::string a = argv[i];
-                if ((!short_opt.empty() && a == short_opt) || a == long_opt)
-                {
-                    print_help();
-                    std::exit(EXIT_SUCCESS);
-                }
-            }
-        }
+        ArgumentBase* help_arg = get_helparg();
 
         if (argc < 2)
         {
             if (has_required() || has_helparg())
             {
-                print_help();
-                std::exit(EXIT_SUCCESS);
+                return ParseResult::HelpRequested;
             }
             // No required args and no help flag: allow running without arguments
         }
@@ -707,7 +814,8 @@ class ArgumentParser
                 std::string opt_name = arg.substr(2);
                 std::string value;
                 size_t eq_pos = opt_name.find('=');
-                if (eq_pos != std::string::npos)
+                const bool has_inline_value = eq_pos != std::string::npos;
+                if (has_inline_value)
                 {
                     value = opt_name.substr(eq_pos + 1);
                     opt_name = opt_name.substr(0, eq_pos);
@@ -726,16 +834,37 @@ class ArgumentParser
                         "' is deprecated and cannot be used.");
                 }
 
+                if (argument == help_arg)
+                {
+                    if (has_inline_value)
+                        throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
+                    return ParseResult::HelpRequested;
+                }
+                if (argument == version_arg)
+                {
+                    if (has_inline_value)
+                        throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
+                    return ParseResult::VersionRequested;
+                }
+
+                reject_duplicate(argument);
+
                 if (argument->arg_type == ArgType::Flag)
                 {
+                    if (has_inline_value)
+                        throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
                     argument->from_string("true");
                 }
                 else
                 {
-                    if (value.empty())
+                    if (!has_inline_value)
                     {
                         if (i + 1 >= argc)
                             throw std::runtime_error("Argument --" + opt_name + " requires a value");
+                        if (!detail::accepts_option_like_value(argument->display_type()) &&
+                            is_registered_option_token(argv[i + 1]))
+                            throw std::runtime_error("Argument '--" + opt_name + "' requires a value before '" +
+                                                     std::string(argv[i + 1]) + "'.");
                         value = argv[++i];
                     }
                     if (argument->is_repeatable)
@@ -768,6 +897,7 @@ class ArgumentParser
                     // if the first argument is not a flag,  value is after argument
                     if (first_argument->arg_type != ArgType::Flag)
                     {
+                        reject_duplicate(first_argument);
                         std::string value = arg.substr(2);
                         if (first_argument->is_repeatable)
                         {
@@ -794,6 +924,15 @@ class ArgumentParser
                                 throw std::runtime_error(std::string("Unknown short flag: -") + sopt);
                             if (argument->arg_type != ArgType::Flag)
                                 throw std::runtime_error(std::string("Only flag arguments can be merged: -") + sopt);
+                            reject_duplicate(argument);
+                            if (argument == help_arg)
+                            {
+                                return ParseResult::HelpRequested;
+                            }
+                            if (argument == version_arg)
+                            {
+                                return ParseResult::VersionRequested;
+                            }
                             argument->from_string("true");
                             argument->was_parsed = true;
                         }
@@ -811,8 +950,18 @@ class ArgumentParser
                     if (!argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + sopt);
 
+                    reject_duplicate(argument);
+
                     if (argument->arg_type == ArgType::Flag)
                     {
+                        if (argument == help_arg)
+                        {
+                            return ParseResult::HelpRequested;
+                        }
+                        if (argument == version_arg)
+                        {
+                            return ParseResult::VersionRequested;
+                        }
                         argument->from_string("true");
                         argument->was_parsed = true;
                     }
@@ -820,6 +969,10 @@ class ArgumentParser
                     {
                         if (i + 1 >= argc)
                             throw std::runtime_error(std::string("Argument -") + sopt + " requires a value");
+                        if (!detail::accepts_option_like_value(argument->display_type()) &&
+                            is_registered_option_token(argv[i + 1]))
+                            throw std::runtime_error(std::string("Argument '-") + sopt +
+                                                     "' requires a value before '" + argv[i + 1] + "'.");
                         std::string value = argv[++i];
                         if (argument->is_repeatable)
                         {
@@ -837,6 +990,11 @@ class ArgumentParser
             {
                 positional_values.push_back(arg);
             }
+        }
+        if (positional_values.size() > positionals_.size() &&
+            (positionals_.empty() || !arguments_.at(positionals_.back())->is_variadic))
+        {
+            throw std::runtime_error("Unexpected positional argument: " + positional_values[positionals_.size()]);
         }
         // deal with positional arguments
         for (size_t i = 0; i < positionals_.size(); ++i)
@@ -867,17 +1025,22 @@ class ArgumentParser
             if (arg->required && !arg->was_parsed)
                 throw std::runtime_error("Required argument missing: " + pair.first);
         }
+        return ParseResult::Success;
     }
 
+  public:
     void print_help()
     {
-        std::cout << programname_ << ": " << description_ << "\n"
-                  << "Version:" << version_ << "\n"
-                  << "Usage: " << programname_ << " [options]";
+        std::cout << programname_ << ": " << description_ << "\n";
+        if (!version_.empty())
+            std::cout << "Version: " << version_ << "\n";
+        std::cout << "Usage: " << programname_ << " [options]";
         for (const auto& name : positionals_)
         {
             const bool variadic = arguments_.count(name) && arguments_.at(name)->is_variadic;
-            std::cout << " <" << name << (variadic ? "..." : "") << ">";
+            const bool required = arguments_.at(name)->required;
+            std::cout << (required ? " <" : " [") << name << (variadic ? "..." : "")
+                      << (required ? ">" : "]");
         }
         std::cout << "\n\n";
         print_help_sections();
@@ -959,6 +1122,25 @@ class ArgumentParser
         return false;
     }
 
+    bool is_registered_option_token(const std::string& token) const
+    {
+        if (detail::is_longopt(token))
+        {
+            std::string name = token.substr(2);
+            const size_t equals = name.find('=');
+            if (equals != std::string::npos)
+                name = name.substr(0, equals);
+            return arguments_.find(name) != arguments_.end();
+        }
+        return detail::is_shortopt(token) && short_to_long_.find(token[1]) != short_to_long_.end();
+    }
+
+    static void reject_duplicate(const ArgumentBase* argument)
+    {
+        if (argument->was_parsed && !argument->is_repeatable)
+            throw std::runtime_error("Argument '--" + argument->long_opt + "' was provided more than once.");
+    }
+
     bool has_helparg() const { return get_helparg() != nullptr; }
 
     ArgumentBase* get_helparg() const
@@ -999,7 +1181,7 @@ class ArgumentParser
         for (const auto& name : display_order)
         {
             const ArgumentBase* arg = arguments_.at(name).get();
-            if (arg->arg_type == ArgType::Positional)
+            if (detail::is_positional_type(arg->arg_type))
                 continue;
             opt_w = std::max(opt_w, arg->long_opt.length());
             std::string ts = arg->label_type();
@@ -1017,7 +1199,7 @@ class ArgumentParser
             for (const auto& name : display_order)
             {
                 const ArgumentBase* arg = arguments_.at(name).get();
-                if (arg->arg_type != ArgType::Positional && arg->required == show_required)
+                if (!detail::is_positional_type(arg->arg_type) && arg->required == show_required)
                 {
                     has_any = true;
                     break;
@@ -1032,7 +1214,7 @@ class ArgumentParser
             for (const auto& name : display_order)
             {
                 const ArgumentBase* arg = arguments_.at(name).get();
-                if (arg->arg_type == ArgType::Positional || arg->required != show_required)
+                if (detail::is_positional_type(arg->arg_type) || arg->required != show_required)
                     continue;
 
                 std::cout << "  ";
@@ -1056,6 +1238,29 @@ class ArgumentParser
             }
             std::cout << "\n";
         }
+
+        if (!positionals_.empty())
+        {
+            size_t name_width = 0;
+            size_t type_width = 0;
+            for (const auto& name : positionals_)
+            {
+                const ArgumentBase* argument = arguments_.at(name).get();
+                name_width = std::max(name_width, name.length() + (argument->is_variadic ? 3U : 0U));
+                type_width = std::max(type_width, argument->display_type().length());
+            }
+
+            std::cout << "Positional arguments:\n";
+            for (const auto& name : positionals_)
+            {
+                const ArgumentBase* argument = arguments_.at(name).get();
+                const std::string display_name = name + (argument->is_variadic ? "..." : "");
+                std::cout << "  " << std::setw(name_width) << std::left << display_name << "    "
+                          << std::setw(type_width) << std::left << argument->display_type() << "    " << argument->help
+                          << "\n";
+            }
+            std::cout << "\n";
+        }
     }
 
     class Arg
@@ -1066,6 +1271,7 @@ class ArgumentParser
         {
             std::unique_ptr<Argument<T>> arg(new Argument<T>());
             arg->value = expected;
+            arg->initial_value = expected;
             return arg;
         }
 
@@ -1074,6 +1280,7 @@ class ArgumentParser
         {
             std::unique_ptr<Argument<T, U>> arg(new Argument<T, U>());
             arg->value = expected;
+            arg->initial_value = expected;
             arg->constraint = constraint;
             return arg;
         }
@@ -1086,21 +1293,43 @@ class ArgumentParser
     {
         if (long_opt.empty())
             throw std::runtime_error("Long option cannot be empty.");
+        if (long_opt[0] == '-' || long_opt.find('=') != std::string::npos ||
+            std::find_if(long_opt.begin(), long_opt.end(), [](char c) {
+                return std::isspace(static_cast<unsigned char>(c)) != 0;
+            }) != long_opt.end())
+            throw std::runtime_error("Invalid long option name: '" + long_opt + "'.");
+        if (short_opt != '\0' &&
+            (short_opt == '-' || short_opt == '=' || !std::isprint(static_cast<unsigned char>(short_opt)) ||
+             std::isspace(static_cast<unsigned char>(short_opt))))
+            throw std::runtime_error("Invalid short option name.");
         if (short_opt != '\0' && exists(short_opt))
             throw std::runtime_error("Short option '" + std::string(1, short_opt) + "' already exists.");
         if (exists(long_opt))
             throw std::runtime_error("Long option '" + long_opt + "' already exists.");
+        if (type == ArgType::RequiredPositional)
+        {
+            for (const auto& name : positionals_)
+            {
+                if (!arguments_.at(name)->required)
+                    throw std::runtime_error("Required positional argument '" + long_opt +
+                                             "' cannot follow optional positional argument '" + name + "'.");
+            }
+        }
+        if (detail::is_positional_type(type) && !positionals_.empty() &&
+            arguments_.at(positionals_.back())->is_variadic)
+            throw std::runtime_error("Cannot register positional argument '" + long_opt +
+                                     "' after variadic positional argument '" + positionals_.back() + "'.");
 
         arg->short_opt = short_opt;
         arg->long_opt = long_opt;
         arg->help = help;
         arg->arg_type = type;
-        arg->required = (type == ArgType::Required);
+        arg->required = (type == ArgType::Required || type == ArgType::RequiredPositional);
         arg->has_default = expected.has_value();
         arg->was_parsed = false;
         arg->is_helparg = is_helparg;
         arg->is_repeatable = is_repeatable;
-        if (type == ArgType::Positional)
+        if (detail::is_positional_type(type))
             positionals_.push_back(long_opt);
         if (short_opt != '\0')
             short_to_long_[short_opt] = long_opt;

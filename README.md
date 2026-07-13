@@ -5,21 +5,21 @@ A lightweight, header-only C++11 command-line argument parsing library with supp
 ## Features
 
 ### Core Features
-- ✅ **Short options**: `-a`, `-p 10`, `-p10`
-- ✅ **Combined short flags**: `-abc` (multiple boolean flags)
-- ✅ **Long options**: `--param=10`, `--param 10`
-- ✅ **Positional arguments**: Order-based unnamed arguments
-- ✅ **Flag arguments**: Boolean switches (no value required)
-- ✅ **Required/Optional arguments**: Enforce or suggest parameters
-- ✅ **Default values**: Fallback values for optional arguments
-- ✅ **Type safety**: Template-based type checking
-- ✅ **Subcommands**: Git-style subcommand support (e.g., `git add`, `git commit`)
-- ✅ **Automatic help generation**: `-h/--help` with formatted output
-- ✅ **Argument validation**: Range and choice constraints
-- ✅ **Deprecation support**: Mark arguments as deprecated
-- ✅ **Custom types**: File type with existence checking
-- ✅ **Repeatable arguments**: Collect multiple values into `std::vector<T>`
-- ✅ **C++11 compatible**: No external dependencies
+- **Short options**: `-a`, `-p 10`, `-p10`
+- **Combined short flags**: `-abc` (multiple boolean flags)
+- **Long options**: `--param=10`, `--param 10`
+- **Positional arguments**: Order-based unnamed arguments
+- **Flag arguments**: Boolean switches (no value required)
+- **Required/Optional arguments**: Enforce or suggest parameters
+- **Default values**: Fallback values for optional arguments
+- **Type safety**: Template-based type checking
+- **Subcommands**: Git-style subcommand support (e.g., `git add`, `git commit`)
+- **Automatic help generation**: `-h/--help` with formatted output
+- **Argument validation**: Range and choice constraints
+- **Deprecation support**: Mark arguments as deprecated
+- **Custom path type**: Store paths and check existence explicitly
+- **Repeatable arguments**: Collect multiple values into `std::vector<T>`
+- **C++11 compatible**: No external dependencies
 
 ## Requirements
 
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
     parser.add_flag('v', "verbose", "Enable verbose output");
 
     // Add positional arguments
-    parser.add_positional<std::string>("input", "Input file");
+    parser.add_required_positional<std::string>("input", "Input file");
     parser.add_positional<std::string>("output", "Output file");
     // Add help
     parser.add_help('h', "help", "Show help message");
@@ -123,7 +123,7 @@ int main(int argc, char *argv[])
 
     app.parse_args(argc, argv);
     
-    return app.execute();  // Returns subcomman
+    return app.execute();  // Executes the selected subcommand
 }
 ```
 
@@ -168,14 +168,14 @@ parser.add_flag("debug", "Enable debug mode");
 **Usage:** `myapp -v` or `myapp --verbose` or `myapp -v --debug`
 
 ### 4. Positional Arguments
-Order-based arguments without flags.
+Order-based arguments without flags. Required positionals must be registered before optional positionals.
 
 ```cpp
-parser.add_positional<std::string>("input", "Input file");
+parser.add_required_positional<std::string>("input", "Input file");
 parser.add_positional<std::string>("output", "Output file");
 ```
 
-**Usage:** `myapp input.txt output.txt`
+**Usage:** `myapp <input> [output]`
 
 ### 5. Repeatable Arguments
 Collect multiple values into a `std::vector<T>`. The template type parameter **must be specified explicitly**.
@@ -220,7 +220,7 @@ parser.add_optional<std::string, Choices<std::string>>(
 );
 ```
 
-### 2. File Type with Validation
+### 2. File Path Type
 ```cpp
 parser.add_optional<File>('i', "input", "Input file", File("default.txt"));
 
@@ -229,6 +229,8 @@ if (input_file.exists()) {
     std::cout << "File exists: " << std::string(input_file) << std::endl;
 }
 ```
+
+`File` stores the path. Call `exists()` explicitly when file existence validation is required.
 
 ### 3. Argument Deprecation
 ```cpp
@@ -268,7 +270,7 @@ Built-in type support:
 - `int`
 - `float`
 - `double`
-- `bool` (`true/false`, `1/0`, `True/False`, `TRUE/FALSE`)
+- `bool` (`true/false`, `yes/no`, `on/off`, `1/0`; case-insensitive)
 - `std::string`
 - `File` (custom type with existence checking)
 - `std::vector<T>` (any of the above as element type, used with `add_repeatable`)
@@ -301,6 +303,20 @@ Maintainer: Your Name, Email: your@email.com
 6. **Type safety**: Specify template types explicitly: `parser.get<int>("count")`
 7. **Repeatable type**: Always specify element type for `add_repeatable`: `add_repeatable<std::string>(...)`, not `add_repeatable(...)`
 
+## Parsing Behavior
+
+- A single `-` is treated as a positional value, commonly used by applications to represent standard input or output.
+- `--` ends option parsing; every following token is positional.
+- `--name=` passes an empty string explicitly.
+- Boolean flags do not accept an inline value such as `--verbose=false`; use a typed boolean option when a value is required.
+- Help and version requests print their output and return from `parse_args()` without terminating the process.
+- Reusing a parser starts each parse from registered defaults.
+- Parsing errors are reported by throwing `std::runtime_error`. Only read argument values after `parse_args()` returns successfully; values are unspecified after a failed parse.
+- A variadic positional argument must be the final positional argument.
+- Repeating a non-repeatable option is an error. Use `add_repeatable<T>` when multiple values are expected.
+- `add_required_positional` registers a required positional; `add_positional` remains optional for compatibility.
+- Required positionals must precede optional and variadic positionals.
+
 ## Building Examples
 ```bash
 g++ -std=c++11 -O2 -I. ./tests/example1.cpp -o example1
@@ -311,10 +327,10 @@ g++ -std=c++11 -O2 -I. ./tests/example1.cpp -o example1
 
 ```
 ArgumentsParser/
-├── ArgumentParser.h       # Simple argument parsing
-├── SubCommandParser.h     # Subcommand support
-├── tests/
-│   ├── example1.cpp       # Basic usage example
-│   └── example2.cpp       # Subcommand example
-└── README.md              # This file
+|-- ArgumentParser.h       # Simple argument parsing
+|-- SubCommandParser.h     # Subcommand support
+|-- tests/
+|   |-- example1.cpp       # Basic usage example
+|   `-- example2.cpp       # Subcommand example
+`-- README.md              # This file
 ```
