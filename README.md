@@ -311,7 +311,7 @@ Maintainer: Your Name, Email: your@email.com
 - `--name=` passes an empty string explicitly.
 - Boolean flags do not accept an inline value such as `--verbose=false`; use a typed boolean option when a value is required.
 - Help and version requests print their output and return from `parse_args()` without terminating the process.
-- Calling `parse_args()` without arguments throws when required arguments are registered; automatic help is shown only when no required arguments exist.
+- Calling `parse_args()` without arguments prints help and throws when required arguments are registered. Explicit help requests print help and return successfully.
 - Reusing a parser starts each parse from registered defaults.
 - Parsing errors are reported by throwing `std::runtime_error`. Only read argument values after `parse_args()` returns successfully; values are unspecified after a failed parse.
 - A variadic positional argument must be the final positional argument.

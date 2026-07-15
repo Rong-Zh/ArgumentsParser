@@ -947,7 +947,22 @@ class SubCommandParser
     {
         current_command_.clear();
         requested_subcommand_.clear();
-        const ParseResult result = parse_args_impl(argc, argv);
+        ParseResult result;
+        try
+        {
+            result = parse_args_impl(argc, argv);
+        }
+        catch (...)
+        {
+            skip_execution_ = true;
+            if (argc == 2 && argv != nullptr && argv[0] != nullptr && argv[1] != nullptr)
+            {
+                const auto command = commands_.find(argv[1]);
+                if (command != commands_.end() && command->second->parser->has_required())
+                    print_subcommand_help(argv[1]);
+            }
+            throw;
+        }
         skip_execution_ = result != ParseResult::Success;
         if (result == ParseResult::HelpRequested)
             print_help();

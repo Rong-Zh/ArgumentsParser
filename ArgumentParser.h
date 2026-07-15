@@ -753,7 +753,17 @@ class ArgumentParser
 
     void parse_args(int argc, char* argv[])
     {
-        const ParseResult result = parse_args_impl(argc, argv);
+        ParseResult result;
+        try
+        {
+            result = parse_args_impl(argc, argv);
+        }
+        catch (...)
+        {
+            if (argc == 1 && argv != nullptr && argv[0] != nullptr && has_required())
+                print_help();
+            throw;
+        }
         if (result == ParseResult::HelpRequested)
             print_help();
         else if (result == ParseResult::VersionRequested)

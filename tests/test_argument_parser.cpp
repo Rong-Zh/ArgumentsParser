@@ -157,7 +157,9 @@ TEST(Positional, RequiredVariadic)
     p.add_positional_variadic<std::string>("files", "files", true);
 
     Args missing({"prog"});
+    testing::internal::CaptureStdout();
     EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_NE(testing::internal::GetCapturedStdout().find("Usage:"), std::string::npos);
 
     Args present({"prog", "one.txt", "two.txt"});
     EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
@@ -193,7 +195,11 @@ TEST(Required, MissingThrows)
     p.add_required<int>("count", "count");
     p.add_help();
     Args a({"prog"});
+    testing::internal::CaptureStdout();
     EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    const std::string output = testing::internal::GetCapturedStdout();
+    EXPECT_NE(output.find("Usage:"), std::string::npos);
+    EXPECT_NE(output.find("--count"), std::string::npos);
 }
 
 TEST(Required, GenericOptionUsesIndependentRequiredFlag)
@@ -355,7 +361,9 @@ TEST(Repeatable, Required)
     p.add_repeatable<std::string>('t', "tag", "tag", true);
 
     Args missing({"prog"});
+    testing::internal::CaptureStdout();
     EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_NE(testing::internal::GetCapturedStdout().find("Usage:"), std::string::npos);
 
     Args present({"prog", "--tag", "one", "--tag", "two"});
     EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));

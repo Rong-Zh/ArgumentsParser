@@ -114,7 +114,9 @@ TEST(SubCommand, RequiredVariadicPositional)
     p.add_positional_variadic<std::string>("files", "files", true);
 
     Args missing({"tool", "run"});
+    testing::internal::CaptureStdout();
     EXPECT_THROW(cmd.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_NE(testing::internal::GetCapturedStdout().find("Usage: tool run"), std::string::npos);
 
     Args present({"tool", "run", "one.txt", "two.txt"});
     EXPECT_NO_THROW(cmd.parse_args(present.argc(), present.argv()));
@@ -278,7 +280,11 @@ TEST(SubCommand, MissingRequiredArgThrowsEvenWithHelpRegistered)
     p.add_help();
 
     Args args({"tool", "run"});
+    testing::internal::CaptureStdout();
     EXPECT_THROW(cmd.parse_args(args.argc(), args.argv()), std::runtime_error);
+    const std::string output = testing::internal::GetCapturedStdout();
+    EXPECT_NE(output.find("Usage: tool run"), std::string::npos);
+    EXPECT_NE(output.find("--number"), std::string::npos);
 }
 
 TEST(SubCommand, RepeatableArgInSubcommand)
@@ -306,7 +312,9 @@ TEST(SubCommand, RequiredRepeatableArg)
     p.add_repeatable<std::string>('t', "tag", "tag", true);
 
     Args missing({"tool", "run"});
+    testing::internal::CaptureStdout();
     EXPECT_THROW(cmd.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_NE(testing::internal::GetCapturedStdout().find("Usage: tool run"), std::string::npos);
 
     Args present({"tool", "run", "--tag", "one", "--tag", "two"});
     EXPECT_NO_THROW(cmd.parse_args(present.argc(), present.argv()));
