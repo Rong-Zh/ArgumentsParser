@@ -107,6 +107,33 @@ TEST(SubCommand, VariadicPositional)
     EXPECT_EQ(captured_files[2], "c.txt");
 }
 
+TEST(SubCommand, RequiredVariadicPositional)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_positional_variadic<std::string>("files", "files", true);
+    p.add_flag('v', "verbose", "verbose");
+
+    Args missing({"tool", "run", "--verbose"});
+    EXPECT_THROW(cmd.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+
+    Args present({"tool", "run", "one.txt", "two.txt"});
+    EXPECT_NO_THROW(cmd.parse_args(present.argc(), present.argv()));
+    EXPECT_EQ(p.get<std::vector<std::string>>("files"),
+              std::vector<std::string>({"one.txt", "two.txt"}));
+}
+
+TEST(SubCommand, FlagIsOptionalByDefault)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_flag('v', "verbose", "verbose");
+
+    Args args({"tool", "run"});
+    EXPECT_NO_THROW(cmd.parse_args(args.argc(), args.argv()));
+    EXPECT_FALSE(p.get<bool>("verbose"));
+}
+
 TEST(SubCommand, OptionalNoDefault)
 {
     // add_optional without a default value must compile and not throw.
@@ -262,6 +289,22 @@ TEST(SubCommand, RepeatableArgInSubcommand)
     EXPECT_EQ(s_captured_fields[1], "db2:vcf:col2");
 }
 
+TEST(SubCommand, RequiredRepeatableArg)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_repeatable<std::string>('t', "tag", "tag", true);
+    p.add_flag('v', "verbose", "verbose");
+
+    Args missing({"tool", "run", "--verbose"});
+    EXPECT_THROW(cmd.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+
+    Args present({"tool", "run", "--tag", "one", "--tag", "two"});
+    EXPECT_NO_THROW(cmd.parse_args(present.argc(), present.argv()));
+    EXPECT_EQ(p.get<std::vector<std::string>>("tag"),
+              std::vector<std::string>({"one", "two"}));
+}
+
 TEST(SubCommandEdgeCases, EmptyInlineValueIsPreserved)
 {
     SubCommandParser cmd("tool", "tool");
@@ -387,7 +430,7 @@ TEST(SubCommandRegistration, RequiredPositional)
 {
     SubCommandParser cmd("tool", "tool");
     ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
-    p.add_required_positional<std::string>("input", "input");
+    p.add_positional<std::string>("input", "input", true);
     Args valid({"tool", "run", "file.txt"});
     EXPECT_NO_THROW(cmd.parse_args(valid.argc(), valid.argv()));
     EXPECT_EQ(p.get<std::string>("input"), "file.txt");
@@ -397,7 +440,7 @@ TEST(SubCommandRegistration, RequiredCannotFollowOptional)
 {
     ArgumentOptions p;
     p.add_positional<std::string>("output", "output");
-    EXPECT_THROW(p.add_required_positional<std::string>("input", "input"), std::runtime_error);
+    EXPECT_THROW(p.add_positional<std::string>("input", "input", true), std::runtime_error);
 }
 
 TEST(SubCommandParse, RepeatedParseResetsValues)

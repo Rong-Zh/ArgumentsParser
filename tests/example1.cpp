@@ -15,32 +15,32 @@ int main(int argc, char *argv[])
     parser.set_version("1.0.0");
     // 1. String argument, using const char* (test Default<std::string>(const char*) constructor)
     parser.add_argument<std::string>(
-        's', "str", ArgType::Optional, "String argument", "hello");
+        's', "str", ArgType::Option, "String argument", "hello");
 
     // 2. String argument, explicit Default<std::string>
     parser.add_argument<std::string>(
-        't', "text", ArgType::Optional, "Text argument", "world");
+        't', "text", ArgType::Option, "Text argument", "world");
 
     // 3. int argument, default 0
     parser.add_argument<int>(
-        'i', "int", ArgType::Optional, "Integer argument", 0);
+        'i', "int", ArgType::Option, "Integer argument", 0);
 
     // 4. double argument, default 0.5
     parser.add_argument<double>(
-        'd', "dbl", ArgType::Optional, "Floating-point argument", 0.5);
+        'd', "dbl", ArgType::Option, "Floating-point argument", 0.5);
 
     // 5. bool argument, default false
     parser.add_argument<bool>(
-        'b', "bool", ArgType::Optional, "Boolean argument", false);
+        'b', "bool", ArgType::Option, "Boolean argument", false);
 
     // Required argument (commented out)
     // parser.add_required<int>("number", "Enter an integer");
     // Optional argument with range constraint
     parser.add_argument<int, Range<int>>(
-        'a', "age", ArgType::Optional, "Age (18~99)", 20, {18, 88});
+        'a', "age", ArgType::Option, "Age (18~99)", 20, {18, 88});
     // Optional argument with choices constraint
     parser.add_argument<std::string, Choices<std::string>>(
-        'c', "color", ArgType::Optional, "Color", "red", Choices<std::string>{{"red", "green", "blue"}});
+        'c', "color", ArgType::Option, "Color", "red", Choices<std::string>{{"red", "green", "blue"}});
     // double type argument
     parser.add_optional<double>('m', "discount", "Discount", 0.7);
     parser.add_optional<double>("name", "Discount", 0.0);

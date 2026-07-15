@@ -151,6 +151,21 @@ TEST(Positional, Variadic)
     EXPECT_EQ(files[2], "c.txt");
 }
 
+TEST(Positional, RequiredVariadic)
+{
+    ArgumentParser p("prog", "test");
+    p.add_positional_variadic<std::string>("files", "files", true);
+    p.add_flag('v', "verbose", "verbose");
+
+    Args missing({"prog", "--verbose"});
+    EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+
+    Args present({"prog", "one.txt", "two.txt"});
+    EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
+    EXPECT_EQ(p.get<std::vector<std::string>>("files"),
+              std::vector<std::string>({"one.txt", "two.txt"}));
+}
+
 // ========================================================================
 // Optional / Required
 // ========================================================================
@@ -180,6 +195,20 @@ TEST(Required, MissingThrows)
     // Extra token so argc >= 2 (avoids the print_help+exit shortcut).
     Args a({"prog", "notanopt"});
     EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+}
+
+TEST(Required, GenericOptionUsesIndependentRequiredFlag)
+{
+    ArgumentParser p("prog", "test");
+    p.add_argument<int>('n', "number", ArgType::Option, "number", Expected<int>(), true);
+    p.add_flag('v', "verbose", "verbose");
+
+    Args missing({"prog", "--verbose"});
+    EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+
+    Args present({"prog", "--number", "42"});
+    EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
+    EXPECT_EQ(p.get<int>("number"), 42);
 }
 
 TEST(Parse, UnknownLongOptThrows)
@@ -319,6 +348,21 @@ TEST(Repeatable, IntType)
     EXPECT_EQ(nums[0], 1);
     EXPECT_EQ(nums[1], 2);
     EXPECT_EQ(nums[2], 3);
+}
+
+TEST(Repeatable, Required)
+{
+    ArgumentParser p("prog", "test");
+    p.add_repeatable<std::string>('t', "tag", "tag", true);
+    p.add_flag('v', "verbose", "verbose");
+
+    Args missing({"prog", "--verbose"});
+    EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+
+    Args present({"prog", "--tag", "one", "--tag", "two"});
+    EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
+    EXPECT_EQ(p.get<std::vector<std::string>>("tag"),
+              std::vector<std::string>({"one", "two"}));
 }
 
 // ========================================================================
@@ -700,6 +744,15 @@ TEST(Registration, RejectsInvalidOptionNames)
     EXPECT_THROW(p.add_flag("bad name", "bad"), std::runtime_error);
 }
 
+TEST(Registration, RequiredFlagIsRejected)
+{
+    ArgumentParser p("prog", "test");
+    EXPECT_THROW(
+        p.add_argument<bool>('v', "verbose", ArgType::Flag, "verbose", Expected<bool>(), true),
+        std::runtime_error);
+}
+
+
 TEST(Positional, CannotRegisterAfterVariadic)
 {
     ArgumentParser p("prog", "test");
@@ -710,13 +763,13 @@ TEST(Positional, CannotRegisterAfterVariadic)
 TEST(Positional, RequiredPositional)
 {
     ArgumentParser p("prog", "test");
-    p.add_required_positional<std::string>("input", "input");
+    p.add_positional<std::string>("input", "input", true);
     Args valid({"prog", "file.txt"});
     p.parse_args(valid.argc(), valid.argv());
     EXPECT_EQ(p.get<std::string>("input"), "file.txt");
 
     ArgumentParser missing("prog", "test");
-    missing.add_required_positional<std::string>("input", "input");
+    missing.add_positional<std::string>("input", "input", true);
     Args absent({"prog", "--"});
     EXPECT_THROW(missing.parse_args(absent.argc(), absent.argv()), std::runtime_error);
 }
@@ -725,13 +778,13 @@ TEST(Positional, RequiredCannotFollowOptional)
 {
     ArgumentParser p("prog", "test");
     p.add_positional<std::string>("output", "output");
-    EXPECT_THROW(p.add_required_positional<std::string>("input", "input"), std::runtime_error);
+    EXPECT_THROW(p.add_positional<std::string>("input", "input", true), std::runtime_error);
 }
 
 TEST(Positional, HelpDistinguishesRequiredAndOptional)
 {
     ArgumentParser p("prog", "test");
-    p.add_required_positional<std::string>("input", "input");
+    p.add_positional<std::string>("input", "input", true);
     p.add_positional<std::string>("output", "output");
     testing::internal::CaptureStdout();
     p.print_help();

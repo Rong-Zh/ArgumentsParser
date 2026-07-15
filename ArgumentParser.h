@@ -32,11 +32,9 @@ enum class BoundType : uint8_t
 
 enum class ArgType : uint8_t
 {
-    Required,
-    Optional,
+    Option,
     Positional,
     Flag,
-    RequiredPositional,
 };
 
 class File
@@ -62,7 +60,7 @@ namespace detail
 
 inline bool is_positional_type(ArgType type)
 {
-    return type == ArgType::Positional || type == ArgType::RequiredPositional;
+    return type == ArgType::Positional;
 }
 
 inline bool startswith(const std::string& str, const std::string& prefix)
@@ -176,7 +174,7 @@ class ArgumentBase
     char short_opt = '\0';
     std::string long_opt;
     std::string help;
-    ArgType arg_type = ArgType::Optional;
+    ArgType arg_type = ArgType::Option;
     bool required = false;
     bool has_default = false;  // true if a default value was provided at registration
     bool was_parsed = false;   // true if the user supplied this argument on the command line
@@ -562,15 +560,16 @@ class ArgumentParser
 
     template <typename T>
     void add_argument(const char short_opt, const std::string& long_opt, ArgType type, const std::string& help,
-                      const Expected<T>& expected = Expected<T>(), bool is_helparg = false, bool is_repeatable = false)
+                      const Expected<T>& expected = Expected<T>(), bool required = false, bool is_helparg = false,
+                      bool is_repeatable = false)
     {
-        add_argument_impl(Arg::argument(expected.get()), short_opt, long_opt, type, help, expected, is_helparg,
-                          is_repeatable);
+        add_argument_impl(Arg::argument(expected.get()), short_opt, long_opt, type, help, expected, required,
+                          is_helparg, is_repeatable);
     }
 
     template <typename T, typename U>
     void add_argument(const char short_opt, const std::string& long_opt, ArgType type, const std::string& help,
-                      const Expected<T>& expected = Expected<T>(), const U& constraint = U())
+                      const Expected<T>& expected = Expected<T>(), const U& constraint = U(), bool required = false)
     {
         if (expected.has_value() && !constraint.check(expected.get()))
         {
@@ -579,25 +578,19 @@ class ArgumentParser
                                      " " + detail::constraint_expectation(constraint.desc()) + ".");
         }
         add_argument_impl(Arg::argument(expected.get(), constraint), short_opt, long_opt, type,
-                          help + constraint.desc(), expected);
+                          help + constraint.desc(), expected, required);
     }
 
     template <typename T>
-    void add_positional(const std::string& long_opt, const std::string& help)
+    void add_positional(const std::string& long_opt, const std::string& help, bool required = false)
     {
-        add_argument<T>('\0', long_opt, ArgType::Positional, help, Expected<T>());
-    }
-
-    template <typename T>
-    void add_required_positional(const std::string& long_opt, const std::string& help)
-    {
-        add_argument<T>('\0', long_opt, ArgType::RequiredPositional, help, Expected<T>());
+        add_argument<T>('\0', long_opt, ArgType::Positional, help, Expected<T>(), required);
     }
 
     // Variadic positional: absorbs all remaining positional values into a vector<T>.
     // Must be registered last; only one variadic positional is allowed.
     template <typename T>
-    void add_positional_variadic(const std::string& long_opt, const std::string& help)
+    void add_positional_variadic(const std::string& long_opt, const std::string& help, bool required = false)
     {
         for (const auto& name : positionals_)
         {
@@ -605,60 +598,60 @@ class ArgumentParser
                 throw std::runtime_error("Only one variadic positional is allowed; '" + name +
                                          "' is already variadic.");
         }
-        add_argument<std::vector<T>>('\0', long_opt, ArgType::Positional, help, Expected<std::vector<T>>(), false,
-                                     true);
+        add_argument<std::vector<T>>('\0', long_opt, ArgType::Positional, help, Expected<std::vector<T>>(), required,
+                                     false, true);
         arguments_[long_opt]->is_variadic = true;
     }
 
     template <typename T>
     void add_required(const char short_opt, const std::string& long_opt, const std::string& help)
     {
-        add_argument<T>(short_opt, long_opt, ArgType::Required, help, Expected<T>());
+        add_argument<T>(short_opt, long_opt, ArgType::Option, help, Expected<T>(), true);
     }
 
     template <typename T>
     void add_required(const std::string& long_opt, const std::string& help)
     {
-        add_argument<T>('\0', long_opt, ArgType::Required, help, Expected<T>());
+        add_argument<T>('\0', long_opt, ArgType::Option, help, Expected<T>(), true);
     }
 
     template <typename T>
     void add_optional(const char short_opt, const std::string& long_opt, const std::string& help,
                       const Expected<T>& expected)
     {
-        add_argument<T>(short_opt, long_opt, ArgType::Optional, help, expected);
+        add_argument<T>(short_opt, long_opt, ArgType::Option, help, expected);
     }
 
     template <typename T>
     void add_optional(const char short_opt, const std::string& long_opt, const std::string& help)
     {
-        add_argument<T>(short_opt, long_opt, ArgType::Optional, help, Expected<T>());
+        add_argument<T>(short_opt, long_opt, ArgType::Option, help, Expected<T>());
     }
 
     template <typename T>
     void add_optional(const std::string& long_opt, const std::string& help, const Expected<T>& expected)
     {
-        add_argument<T>('\0', long_opt, ArgType::Optional, help, expected);
+        add_argument<T>('\0', long_opt, ArgType::Option, help, expected);
     }
 
     template <typename T>
     void add_optional(const std::string& long_opt, const std::string& help)
     {
-        add_argument<T>('\0', long_opt, ArgType::Optional, help, Expected<T>());
+        add_argument<T>('\0', long_opt, ArgType::Option, help, Expected<T>());
     }
 
     template <typename T, typename U>
     void add_optional(const char short_opt, const std::string& long_opt, const std::string& help,
                       const Expected<T>& expected, const U& constraint)
     {
-        add_argument<T, U>(short_opt, long_opt, ArgType::Optional, help, expected, constraint);
+        add_argument<T, U>(short_opt, long_opt, ArgType::Option, help, expected, constraint);
     }
 
     template <typename T, typename U>
     void add_optional(const std::string& long_opt, const std::string& help, const Expected<T>& expected,
                       const U& constraint)
     {
-        add_argument<T, U>('\0', long_opt, ArgType::Optional, help, expected, constraint);
+        add_argument<T, U>('\0', long_opt, ArgType::Option, help, expected, constraint);
     }
 
     void add_flag(const char short_opt, const std::string& long_opt, const std::string& help)
@@ -672,22 +665,24 @@ class ArgumentParser
     }
 
     template <typename T>
-    void add_repeatable(const char short_opt, const std::string& long_opt, const std::string& help)
+    void add_repeatable(const char short_opt, const std::string& long_opt, const std::string& help,
+                        bool required = false)
     {
-        add_argument<std::vector<T>>(short_opt, long_opt, ArgType::Optional, help, Expected<std::vector<T>>(), false,
-                                     true);
+        add_argument<std::vector<T>>(short_opt, long_opt, ArgType::Option, help, Expected<std::vector<T>>(), required,
+                                     false, true);
     }
 
     template <typename T>
-    void add_repeatable(const std::string& long_opt, const std::string& help)
+    void add_repeatable(const std::string& long_opt, const std::string& help, bool required = false)
     {
-        add_argument<std::vector<T>>('\0', long_opt, ArgType::Optional, help, Expected<std::vector<T>>(), false, true);
+        add_argument<std::vector<T>>('\0', long_opt, ArgType::Option, help, Expected<std::vector<T>>(), required,
+                                     false, true);
     }
 
     void add_help(char short_opt = 'h', const std::string& long_opt = "help",
                   const std::string& help = "Show help message")
     {
-        add_argument<bool>(short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), true);
+        add_argument<bool>(short_opt, long_opt, ArgType::Flag, help, Expected<bool>(), false, true);
     }
 
     void add_version(char short_opt = 'V', const std::string& long_opt = "version",
@@ -1288,8 +1283,8 @@ class ArgumentParser
 
     template <typename T>
     void add_argument_impl(std::unique_ptr<ArgumentBase> arg, const char short_opt, const std::string& long_opt,
-                           ArgType type, const std::string& help, const Expected<T>& expected, bool is_helparg = false,
-                           bool is_repeatable = false)
+                           ArgType type, const std::string& help, const Expected<T>& expected, bool required = false,
+                           bool is_helparg = false, bool is_repeatable = false)
     {
         if (long_opt.empty())
             throw std::runtime_error("Long option cannot be empty.");
@@ -1306,7 +1301,9 @@ class ArgumentParser
             throw std::runtime_error("Short option '" + std::string(1, short_opt) + "' already exists.");
         if (exists(long_opt))
             throw std::runtime_error("Long option '" + long_opt + "' already exists.");
-        if (type == ArgType::RequiredPositional)
+        if (type == ArgType::Flag && required)
+            throw std::runtime_error("Flag argument '--" + long_opt + "' cannot be required.");
+        if (type == ArgType::Positional && required)
         {
             for (const auto& name : positionals_)
             {
@@ -1324,7 +1321,7 @@ class ArgumentParser
         arg->long_opt = long_opt;
         arg->help = help;
         arg->arg_type = type;
-        arg->required = (type == ArgType::Required || type == ArgType::RequiredPositional);
+        arg->required = required;
         arg->has_default = expected.has_value();
         arg->was_parsed = false;
         arg->is_helparg = is_helparg;

@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
     parser.add_flag('v', "verbose", "Enable verbose output");
 
     // Add positional arguments
-    parser.add_required_positional<std::string>("input", "Input file");
+    parser.add_positional<std::string>("input", "Input file", true);
     parser.add_positional<std::string>("output", "Output file");
     // Add help
     parser.add_help('h', "help", "Show help message");
@@ -171,7 +171,7 @@ parser.add_flag("debug", "Enable debug mode");
 Order-based arguments without flags. Required positionals must be registered before optional positionals.
 
 ```cpp
-parser.add_required_positional<std::string>("input", "Input file");
+parser.add_positional<std::string>("input", "Input file", true);
 parser.add_positional<std::string>("output", "Output file");
 ```
 
@@ -184,6 +184,7 @@ Collect multiple values into a `std::vector<T>`. The template type parameter **m
 // Collect multiple values into std::vector<std::string>
 parser.add_repeatable<std::string>('f', "field", "Field name (repeatable)");
 parser.add_repeatable<int>("count", "Count value (repeatable)");
+parser.add_repeatable<std::string>('t', "tag", "Required tag", true);
 
 // Retrieve as vector
 auto fields = parser.get<std::vector<std::string>>("field");
@@ -314,7 +315,7 @@ Maintainer: Your Name, Email: your@email.com
 - Parsing errors are reported by throwing `std::runtime_error`. Only read argument values after `parse_args()` returns successfully; values are unspecified after a failed parse.
 - A variadic positional argument must be the final positional argument.
 - Repeating a non-repeatable option is an error. Use `add_repeatable<T>` when multiple values are expected.
-- `add_required_positional` registers a required positional; `add_positional` remains optional for compatibility.
+- Pass `true` as the final argument to `add_positional`, `add_positional_variadic`, or `add_repeatable` to place it in the required arguments. Flags are always optional.
 - Required positionals must precede optional and variadic positionals.
 
 ## Building Examples
