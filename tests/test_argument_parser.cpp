@@ -155,9 +155,8 @@ TEST(Positional, RequiredVariadic)
 {
     ArgumentParser p("prog", "test");
     p.add_positional_variadic<std::string>("files", "files", true);
-    p.add_flag('v', "verbose", "verbose");
 
-    Args missing({"prog", "--verbose"});
+    Args missing({"prog"});
     EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
 
     Args present({"prog", "one.txt", "two.txt"});
@@ -192,8 +191,8 @@ TEST(Required, MissingThrows)
 {
     ArgumentParser p("prog", "test");
     p.add_required<int>("count", "count");
-    // Extra token so argc >= 2 (avoids the print_help+exit shortcut).
-    Args a({"prog", "notanopt"});
+    p.add_help();
+    Args a({"prog"});
     EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
@@ -354,9 +353,8 @@ TEST(Repeatable, Required)
 {
     ArgumentParser p("prog", "test");
     p.add_repeatable<std::string>('t', "tag", "tag", true);
-    p.add_flag('v', "verbose", "verbose");
 
-    Args missing({"prog", "--verbose"});
+    Args missing({"prog"});
     EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
 
     Args present({"prog", "--tag", "one", "--tag", "two"});

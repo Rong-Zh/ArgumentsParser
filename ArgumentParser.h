@@ -781,11 +781,8 @@ class ArgumentParser
 
         if (argc < 2)
         {
-            if (has_required() || has_helparg())
-            {
+            if (!has_required() && has_helparg())
                 return ParseResult::HelpRequested;
-            }
-            // No required args and no help flag: allow running without arguments
         }
         std::vector<std::string> positional_values;
         bool end_of_opts = false;

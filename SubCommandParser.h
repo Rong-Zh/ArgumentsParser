@@ -1005,7 +1005,7 @@ class SubCommandParser
         // Check if all arguments are optional
         auto& cmd = commands_[subcmd_name];
         ArgumentOptions& parser = *cmd->parser;
-        if (argc < 3 && (parser.has_required() || parser.has_helparg()))
+        if (argc < 3 && !parser.has_required() && parser.has_helparg())
         {
             // No arguments provided, show help
             requested_subcommand_ = subcmd_name;

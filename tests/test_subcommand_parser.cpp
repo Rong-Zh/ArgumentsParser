@@ -112,9 +112,8 @@ TEST(SubCommand, RequiredVariadicPositional)
     SubCommandParser cmd("tool", "tool");
     ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
     p.add_positional_variadic<std::string>("files", "files", true);
-    p.add_flag('v', "verbose", "verbose");
 
-    Args missing({"tool", "run", "--verbose"});
+    Args missing({"tool", "run"});
     EXPECT_THROW(cmd.parse_args(missing.argc(), missing.argv()), std::runtime_error);
 
     Args present({"tool", "run", "one.txt", "two.txt"});
@@ -271,6 +270,17 @@ TEST(SubCommand, SubcommandRequiredArgMissing)
     EXPECT_THROW(cmd.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
+TEST(SubCommand, MissingRequiredArgThrowsEvenWithHelpRegistered)
+{
+    SubCommandParser cmd("tool", "tool");
+    ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
+    p.add_required<int>('n', "number", "number");
+    p.add_help();
+
+    Args args({"tool", "run"});
+    EXPECT_THROW(cmd.parse_args(args.argc(), args.argv()), std::runtime_error);
+}
+
 TEST(SubCommand, RepeatableArgInSubcommand)
 {
     s_captured_fields.clear();
@@ -294,9 +304,8 @@ TEST(SubCommand, RequiredRepeatableArg)
     SubCommandParser cmd("tool", "tool");
     ArgumentOptions &p = cmd.add_subcommand("run", "run", [](ArgumentOptions &) { return 0; });
     p.add_repeatable<std::string>('t', "tag", "tag", true);
-    p.add_flag('v', "verbose", "verbose");
 
-    Args missing({"tool", "run", "--verbose"});
+    Args missing({"tool", "run"});
     EXPECT_THROW(cmd.parse_args(missing.argc(), missing.argv()), std::runtime_error);
 
     Args present({"tool", "run", "--tag", "one", "--tag", "two"});
