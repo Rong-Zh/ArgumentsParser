@@ -30,7 +30,7 @@ TEST(LongOpt, SpaceSeparated)
     ArgumentParser p("prog", "test");
     p.add_optional<std::string>('n', "name", "name", std::string("default"));
     Args a({"prog", "--name", "Alice"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("name"), "Alice");
 }
 
@@ -39,7 +39,7 @@ TEST(LongOpt, EqualsSeparated)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 8080);
     Args a({"prog", "--port=9090"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("port"), 9090);
 }
 
@@ -48,7 +48,7 @@ TEST(ShortOpt, SpaceSeparated)
     ArgumentParser p("prog", "test");
     p.add_optional<std::string>('n', "name", "name", std::string("default"));
     Args a({"prog", "-n", "Bob"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("name"), "Bob");
 }
 
@@ -57,7 +57,7 @@ TEST(ShortOpt, NoSpace)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 0);
     Args a({"prog", "-p9000"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("port"), 9000);
 }
 
@@ -66,7 +66,7 @@ TEST(ShortOpt, NegativeIntValue)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('a', "alpha", "a number", 0);
     Args a({"prog", "-a", "-1"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("alpha"), -1);
 }
 
@@ -75,7 +75,7 @@ TEST(ShortOpt, NegativeDoubleValue)
     ArgumentParser p("prog", "test");
     p.add_optional<double>('x', "val", "a float", 0.0);
     Args a({"prog", "-x", "-3.14"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_DOUBLE_EQ(p.get<double>("val"), -3.14);
 }
 
@@ -88,7 +88,7 @@ TEST(Flag, SetViaLongOpt)
     ArgumentParser p("prog", "test");
     p.add_flag('v', "verbose", "verbose");
     Args a({"prog", "--verbose"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_TRUE(p.get<bool>("verbose"));
 }
 
@@ -97,7 +97,7 @@ TEST(Flag, SetViaShortOpt)
     ArgumentParser p("prog", "test");
     p.add_flag('v', "verbose", "verbose");
     Args a({"prog", "-v"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_TRUE(p.get<bool>("verbose"));
 }
 
@@ -106,7 +106,7 @@ TEST(Flag, DefaultsFalseWhenAbsent)
     ArgumentParser p("prog", "test");
     p.add_flag('v', "verbose", "verbose");
     Args a({"prog"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_FALSE(p.get<bool>("verbose"));
 }
 
@@ -117,7 +117,7 @@ TEST(Flag, CombinedShortFlags)
     p.add_flag('x', "extra",   "extra");
     p.add_flag('q', "quiet",   "quiet");
     Args a({"prog", "-vxq"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_TRUE(p.get<bool>("verbose"));
     EXPECT_TRUE(p.get<bool>("extra"));
     EXPECT_TRUE(p.get<bool>("quiet"));
@@ -133,7 +133,7 @@ TEST(Positional, BasicTwoArgs)
     p.add_positional<std::string>("input",  "input file");
     p.add_positional<std::string>("output", "output file");
     Args a({"prog", "in.txt", "out.txt"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("input"),  "in.txt");
     EXPECT_EQ(p.get<std::string>("output"), "out.txt");
 }
@@ -143,7 +143,7 @@ TEST(Positional, Variadic)
     ArgumentParser p("prog", "test");
     p.add_positional_variadic<std::string>("files", "input files");
     Args a({"prog", "a.txt", "b.txt", "c.txt"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     auto files = p.get<std::vector<std::string>>("files");
     ASSERT_EQ(files.size(), static_cast<size_t>(3));
     EXPECT_EQ(files[0], "a.txt");
@@ -158,11 +158,11 @@ TEST(Positional, RequiredVariadic)
 
     Args missing({"prog"});
     testing::internal::CaptureStdout();
-    EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
-    EXPECT_NE(testing::internal::GetCapturedStdout().find("Usage:"), std::string::npos);
+    EXPECT_THROW((void)p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStdout().find("Usage:"), std::string::npos);
 
     Args present({"prog", "one.txt", "two.txt"});
-    EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
+    EXPECT_NO_THROW((void)p.parse_args(present.argc(), present.argv()));
     EXPECT_EQ(p.get<std::vector<std::string>>("files"),
               std::vector<std::string>({"one.txt", "two.txt"}));
 }
@@ -185,21 +185,21 @@ TEST(Optional, DefaultUsedWhenAbsent)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 8080);
     Args a({"prog"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("port"), 8080);
 }
 
-TEST(Required, MissingThrows)
+TEST(Required, MissingThrowsWithoutPrintingHelp)
 {
     ArgumentParser p("prog", "test");
     p.add_required<int>("count", "count");
     p.add_help();
     Args a({"prog"});
     testing::internal::CaptureStdout();
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
     const std::string output = testing::internal::GetCapturedStdout();
-    EXPECT_NE(output.find("Usage:"), std::string::npos);
-    EXPECT_NE(output.find("--count"), std::string::npos);
+    EXPECT_EQ(output.find("Usage:"), std::string::npos);
+    EXPECT_EQ(output.find("--count"), std::string::npos);
 }
 
 TEST(Required, GenericOptionUsesIndependentRequiredFlag)
@@ -209,10 +209,10 @@ TEST(Required, GenericOptionUsesIndependentRequiredFlag)
     p.add_flag('v', "verbose", "verbose");
 
     Args missing({"prog", "--verbose"});
-    EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
 
     Args present({"prog", "--number", "42"});
-    EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
+    EXPECT_NO_THROW((void)p.parse_args(present.argc(), present.argv()));
     EXPECT_EQ(p.get<int>("number"), 42);
 }
 
@@ -220,7 +220,7 @@ TEST(Parse, UnknownLongOptThrows)
 {
     ArgumentParser p("prog", "test");
     Args a({"prog", "--unknown"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 // ========================================================================
@@ -232,7 +232,7 @@ TEST(Range, ValidValuePasses)
     ArgumentParser p("prog", "test");
     p.add_optional<int, Range<int>>('a', "age", "age", Expected<int>(20), Range<int>{18, 99});
     Args a({"prog", "--age", "30"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("age"), 30);
 }
 
@@ -241,7 +241,7 @@ TEST(Range, OutOfBoundsThrows)
     ArgumentParser p("prog", "test");
     p.add_optional<int, Range<int>>('a', "age", "age", Expected<int>(20), Range<int>{18, 99});
     Args a({"prog", "--age", "200"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Range, OpenBounds)
@@ -300,7 +300,7 @@ TEST(Choices, ValidChoicePasses)
         Expected<std::string>(std::string("red")),
         Choices<std::string>{{"red", "green", "blue"}});
     Args a({"prog", "--color", "green"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("color"), "green");
 }
 
@@ -312,7 +312,7 @@ TEST(Choices, InvalidChoiceThrows)
         Expected<std::string>(std::string("red")),
         Choices<std::string>{{"red", "green", "blue"}});
     Args a({"prog", "--color", "purple"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Choices, InvalidDefaultThrowsAtRegistration)
@@ -334,7 +334,7 @@ TEST(Repeatable, StringType)
     ArgumentParser p("prog", "test");
     p.add_repeatable<std::string>('f', "field", "field");
     Args a({"prog", "-f", "x", "-f", "y", "-f", "z"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     auto fields = p.get<std::vector<std::string>>("field");
     ASSERT_EQ(fields.size(), static_cast<size_t>(3));
     EXPECT_EQ(fields[0], "x");
@@ -347,7 +347,7 @@ TEST(Repeatable, IntType)
     ArgumentParser p("prog", "test");
     p.add_repeatable<int>('n', "num", "number");
     Args a({"prog", "-n", "1", "-n", "2", "-n", "3"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     auto nums = p.get<std::vector<int>>("num");
     ASSERT_EQ(nums.size(), static_cast<size_t>(3));
     EXPECT_EQ(nums[0], 1);
@@ -362,11 +362,11 @@ TEST(Repeatable, Required)
 
     Args missing({"prog"});
     testing::internal::CaptureStdout();
-    EXPECT_THROW(p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
-    EXPECT_NE(testing::internal::GetCapturedStdout().find("Usage:"), std::string::npos);
+    EXPECT_THROW((void)p.parse_args(missing.argc(), missing.argv()), std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStdout().find("Usage:"), std::string::npos);
 
     Args present({"prog", "--tag", "one", "--tag", "two"});
-    EXPECT_NO_THROW(p.parse_args(present.argc(), present.argv()));
+    EXPECT_NO_THROW((void)p.parse_args(present.argc(), present.argv()));
     EXPECT_EQ(p.get<std::vector<std::string>>("tag"),
               std::vector<std::string>({"one", "two"}));
 }
@@ -380,7 +380,7 @@ TEST(WasSet, TrueWhenProvided)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 8080);
     Args a({"prog", "--port", "9090"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_TRUE(p.was_set("port"));
     EXPECT_TRUE(p.was_set('p'));
 }
@@ -390,7 +390,7 @@ TEST(WasSet, FalseWhenAbsent)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 8080);
     Args a({"prog"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_FALSE(p.was_set("port"));
     EXPECT_FALSE(p.was_set('p'));
 }
@@ -405,7 +405,7 @@ TEST(Deprecate, UsageThrows)
     p.add_flag('o', "old-flag", "old flag");
     p.deprecate("old-flag");
     Args a({"prog", "--old-flag"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Deprecate, NonExistentReturnsFalse)
@@ -423,7 +423,7 @@ TEST(Get, TypeMismatchThrows)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 8080);
     Args a({"prog"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_THROW(p.get<std::string>("port"), std::runtime_error);
 }
 
@@ -431,7 +431,7 @@ TEST(Get, UnknownNameThrows)
 {
     ArgumentParser p("prog", "test");
     Args a({"prog"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_THROW(p.get<int>("nope"), std::runtime_error);
 }
 
@@ -445,7 +445,7 @@ TEST(Parse, EndOfOptsMarker)
     p.add_positional<std::string>("first",  "first");
     p.add_positional<std::string>("second", "second");
     Args a({"prog", "--", "--not-an-opt", "also-positional"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("first"),  "--not-an-opt");
     EXPECT_EQ(p.get<std::string>("second"), "also-positional");
 }
@@ -455,7 +455,7 @@ TEST(Parse, SingleDashIsPositional)
     ArgumentParser p("prog", "test");
     p.add_positional<std::string>("input", "input");
     Args a({"prog", "-"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("input"), "-");
 }
 
@@ -464,7 +464,7 @@ TEST(Parse, NegativeDoubleAsPositional)
     ArgumentParser p("prog", "test");
     p.add_positional<double>("value", "a numeric value");
     Args a({"prog", "-3.14"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_NEAR(p.get<double>("value"), -3.14, 1e-9);
 }
 
@@ -473,7 +473,7 @@ TEST(Parse, NegativeIntAsPositional)
     ArgumentParser p("prog", "test");
     p.add_positional<int>("value", "an integer");
     Args a({"prog", "-42"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("value"), -42);
 }
 
@@ -488,7 +488,7 @@ TEST(BoolParse, TrueVariants)
         ArgumentParser p("prog", "");
         p.add_optional<bool>('f', "flag", "flag", false);
         Args a({"prog", "--flag", v});
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         EXPECT_TRUE(p.get<bool>("flag")) << "failed for: " << v;
     }
 }
@@ -500,7 +500,7 @@ TEST(BoolParse, FalseVariants)
         ArgumentParser p("prog", "");
         p.add_optional<bool>('f', "flag", "flag", true);
         Args a({"prog", "--flag", v});
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         EXPECT_FALSE(p.get<bool>("flag")) << "failed for: " << v;
     }
 }
@@ -510,7 +510,7 @@ TEST(BoolParse, InvalidStringThrows)
     ArgumentParser p("prog", "");
     p.add_optional<bool>('f', "flag", "flag", false);
     Args a({"prog", "--flag", "maybe"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(BoolParse, MixedCaseVariants)
@@ -521,7 +521,7 @@ TEST(BoolParse, MixedCaseVariants)
         ArgumentParser p("prog", "test");
         p.add_optional<bool>('f', "flag", "flag", false);
         Args a({"prog", "--flag", value});
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         EXPECT_TRUE(p.get<bool>("flag"));
     }
 
@@ -531,7 +531,7 @@ TEST(BoolParse, MixedCaseVariants)
         ArgumentParser p("prog", "test");
         p.add_optional<bool>('f', "flag", "flag", true);
         Args a({"prog", "--flag", value});
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         EXPECT_FALSE(p.get<bool>("flag"));
     }
 }
@@ -545,7 +545,7 @@ TEST(Double, ParsePrecision)
     ArgumentParser p("prog", "test");
     p.add_optional<double>('d', "discount", "discount", 0.5);
     Args a({"prog", "--discount", "0.75"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_NEAR(p.get<double>("discount"), 0.75, 1e-9);
 }
 
@@ -554,7 +554,7 @@ TEST(FileType, PathStored)
     ArgumentParser p("prog", "test");
     p.add_optional<File>('i', "input", "input file", File("default.txt"));
     Args a({"prog", "--input", "myfile.vcf"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     File f = p.get<File>("input");
     EXPECT_EQ(std::string(f), "myfile.vcf");
 }
@@ -589,7 +589,7 @@ TEST(Metadata, HelpReturnsWithoutExiting)
     p.add_help();
     Args a({"prog", "--help"});
     testing::internal::CaptureStdout();
-    EXPECT_NO_THROW(p.parse_args(a.argc(), a.argv()));
+    EXPECT_NO_THROW((void)p.parse_args(a.argc(), a.argv()));
     const std::string output = testing::internal::GetCapturedStdout();
     EXPECT_NE(output.find("Usage:"), std::string::npos);
     EXPECT_EQ(output.find("Version:"), std::string::npos);
@@ -604,7 +604,7 @@ TEST(Metadata, VersionReturnsWithoutExiting)
     p.add_version();
     Args a({"prog", "--version"});
     testing::internal::CaptureStdout();
-    EXPECT_NO_THROW(p.parse_args(a.argc(), a.argv()));
+    EXPECT_NO_THROW((void)p.parse_args(a.argc(), a.argv()));
     const std::string output = testing::internal::GetCapturedStdout();
     EXPECT_NE(output.find("2.3.1"), std::string::npos);
 }
@@ -641,7 +641,7 @@ TEST(Mixed, OptsAndPositionals)
     p.add_flag('v', "verbose", "verbose");
     p.add_positional<std::string>("input", "input");
     Args a({"prog", "--port=3000", "data.txt", "-v"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<int>("port"), 3000);
     EXPECT_TRUE(p.get<bool>("verbose"));
     EXPECT_EQ(p.get<std::string>("input"), "data.txt");
@@ -652,7 +652,7 @@ TEST(ParseEdgeCases, EmptyInlineValueIsPreserved)
     ArgumentParser p("prog", "test");
     p.add_optional<std::string>('n', "name", "name", "default");
     Args a({"prog", "--name="});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("name"), "");
 }
 
@@ -661,7 +661,7 @@ TEST(ParseEdgeCases, FlagWithInlineValueThrows)
     ArgumentParser p("prog", "test");
     p.add_flag('v', "verbose", "verbose");
     Args a({"prog", "--verbose=false"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(ParseEdgeCases, ExtraPositionalThrows)
@@ -669,7 +669,7 @@ TEST(ParseEdgeCases, ExtraPositionalThrows)
     ArgumentParser p("prog", "test");
     p.add_positional<std::string>("input", "input");
     Args a({"prog", "one", "two"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(ParseEdgeCases, NumericTrailingCharactersThrow)
@@ -677,7 +677,7 @@ TEST(ParseEdgeCases, NumericTrailingCharactersThrow)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('n', "number", "number", 0);
     Args a({"prog", "--number", "123abc"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(ParseEdgeCases, ConversionErrorContainsArgumentContext)
@@ -687,7 +687,7 @@ TEST(ParseEdgeCases, ConversionErrorContainsArgumentContext)
     Args a({"prog", "--number", "abc"});
     try
     {
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         FAIL() << "Expected parse failure";
     }
     catch (const std::runtime_error& error)
@@ -705,7 +705,7 @@ TEST(ParseEdgeCases, MissingNumericValueBeforeRegisteredOption)
     Args a({"prog", "--port", "--verbose"});
     try
     {
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         FAIL() << "Expected missing value failure";
     }
     catch (const std::runtime_error& error)
@@ -721,7 +721,7 @@ TEST(ParseEdgeCases, RangeErrorHasNaturalDescription)
     Args a({"prog", "--age", "200"});
     try
     {
-        p.parse_args(a.argc(), a.argv());
+        (void)p.parse_args(a.argc(), a.argv());
         FAIL() << "Expected range failure";
     }
     catch (const std::runtime_error& error)
@@ -737,7 +737,7 @@ TEST(ParseEdgeCases, HelpLikeValueIsNotSpecial)
     p.add_optional<std::string>('o', "output", "output", "default");
     p.add_help();
     Args a({"prog", "--output", "--help"});
-    p.parse_args(a.argc(), a.argv());
+    (void)p.parse_args(a.argc(), a.argv());
     EXPECT_EQ(p.get<std::string>("output"), "--help");
 }
 
@@ -771,13 +771,13 @@ TEST(Positional, RequiredPositional)
     ArgumentParser p("prog", "test");
     p.add_positional<std::string>("input", "input", true);
     Args valid({"prog", "file.txt"});
-    p.parse_args(valid.argc(), valid.argv());
+    (void)p.parse_args(valid.argc(), valid.argv());
     EXPECT_EQ(p.get<std::string>("input"), "file.txt");
 
     ArgumentParser missing("prog", "test");
     missing.add_positional<std::string>("input", "input", true);
     Args absent({"prog", "--"});
-    EXPECT_THROW(missing.parse_args(absent.argc(), absent.argv()), std::runtime_error);
+    EXPECT_THROW((void)missing.parse_args(absent.argc(), absent.argv()), std::runtime_error);
 }
 
 TEST(Positional, RequiredCannotFollowOptional)
@@ -806,12 +806,12 @@ TEST(Parse, RepeatedParseResetsValues)
     p.add_repeatable<std::string>('t', "tag", "tag");
 
     Args first({"prog", "--number", "9", "-v", "-t", "one"});
-    p.parse_args(first.argc(), first.argv());
+    (void)p.parse_args(first.argc(), first.argv());
     EXPECT_EQ(p.get<int>("number"), 9);
     EXPECT_TRUE(p.get<bool>("verbose"));
 
     Args second({"prog", "-t", "two"});
-    p.parse_args(second.argc(), second.argv());
+    (void)p.parse_args(second.argc(), second.argv());
     EXPECT_EQ(p.get<int>("number"), 7);
     EXPECT_FALSE(p.get<bool>("verbose"));
     EXPECT_EQ(p.get<std::vector<std::string>>("tag"), std::vector<std::string>({"two"}));
@@ -820,7 +820,7 @@ TEST(Parse, RepeatedParseResetsValues)
 TEST(Parse, RejectsInvalidArgv)
 {
     ArgumentParser p("prog", "test");
-    EXPECT_THROW(p.parse_args(0, nullptr), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(0, nullptr), std::runtime_error);
 }
 
 TEST(Parse, UnsignedRejectsNegativeValue)
@@ -828,7 +828,7 @@ TEST(Parse, UnsignedRejectsNegativeValue)
     ArgumentParser p("prog", "test");
     p.add_optional<unsigned int>('n', "number", "number", 0U);
     Args a({"prog", "--number=-1"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Parse, IntegerOverflowThrows)
@@ -836,7 +836,7 @@ TEST(Parse, IntegerOverflowThrows)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('n', "number", "number", 0);
     Args a({"prog", "--number=999999999999999999999999"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Parse, DuplicateOptionThrows)
@@ -844,7 +844,7 @@ TEST(Parse, DuplicateOptionThrows)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 80);
     Args a({"prog", "--port", "8000", "--port", "9000"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Parse, DuplicateAcrossShortAndLongThrows)
@@ -852,7 +852,7 @@ TEST(Parse, DuplicateAcrossShortAndLongThrows)
     ArgumentParser p("prog", "test");
     p.add_optional<int>('p', "port", "port", 80);
     Args a({"prog", "-p", "8000", "--port", "9000"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 TEST(Parse, DuplicateFlagThrows)
@@ -860,7 +860,7 @@ TEST(Parse, DuplicateFlagThrows)
     ArgumentParser p("prog", "test");
     p.add_flag('v', "verbose", "verbose");
     Args a({"prog", "-v", "--verbose"});
-    EXPECT_THROW(p.parse_args(a.argc(), a.argv()), std::runtime_error);
+    EXPECT_THROW((void)p.parse_args(a.argc(), a.argv()), std::runtime_error);
 }
 
 int main(int argc, char **argv)

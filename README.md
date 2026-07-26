@@ -64,7 +64,8 @@ int main(int argc, char *argv[])
     // Add help
     parser.add_help('h', "help", "Show help message");
     
-    parser.parse_args(argc, argv);
+    if (!parser.parse_args(argc, argv))
+        return EXIT_SUCCESS;
     int number = parser.get<int>("number");
     std::string name = parser.get<std::string>("name");
     bool verbose = parser.get<bool>("verbose");
@@ -121,7 +122,8 @@ int main(int argc, char *argv[])
     mul_parser.add_required<int>('b', "second", "Second number");
     mul_parser.add_help();
 
-    app.parse_args(argc, argv);
+    if (!app.parse_args(argc, argv))
+        return EXIT_SUCCESS;
     
     return app.execute();  // Executes the selected subcommand
 }
@@ -297,12 +299,13 @@ Maintainer: Your Name, Email: your@email.com
 ## Best Practices
 
 1. **Always add help**: Call `parser.add_help()` for user-friendly CLI
-2. **Use exceptions**: Wrap `parse_args()` in try-catch
-3. **Return exit codes**: Return `EXIT_SUCCESS` or `EXIT_FAILURE` from `main`
-4. **Validate early**: Use constraints (Range, Choices) instead of manual validation
-5. **Use subcommands**: For complex applications with multiple operations
-6. **Type safety**: Specify template types explicitly: `parser.get<int>("count")`
-7. **Repeatable type**: Always specify element type for `add_repeatable`: `add_repeatable<std::string>(...)`, not `add_repeatable(...)`
+2. **Check the result**: Continue only when `parse_args()` returns `true`
+3. **Use exceptions**: Catch parsing errors at the application boundary
+4. **Return exit codes**: Return `EXIT_SUCCESS` or `EXIT_FAILURE` from `main`
+5. **Validate early**: Use constraints (Range, Choices) instead of manual validation
+6. **Use subcommands**: For complex applications with multiple operations
+7. **Type safety**: Specify template types explicitly: `parser.get<int>("count")`
+8. **Repeatable type**: Always specify element type for `add_repeatable`: `add_repeatable<std::string>(...)`, not `add_repeatable(...)`
 
 ## Parsing Behavior
 
@@ -310,19 +313,57 @@ Maintainer: Your Name, Email: your@email.com
 - `--` ends option parsing; every following token is positional.
 - `--name=` passes an empty string explicitly.
 - Boolean flags do not accept an inline value such as `--verbose=false`; use a typed boolean option when a value is required.
-- Help and version requests print their output and return from `parse_args()` without terminating the process.
-- Calling `parse_args()` without arguments prints help and throws when required arguments are registered. Explicit help requests print help and return successfully.
+- `parse_args()` returns `true` after normal parsing and `false` after handling help or version output.
+- Parsing errors throw without printing help automatically. Applications decide whether an error should be followed by `print_help()`.
 - Reusing a parser starts each parse from registered defaults.
-- Parsing errors are reported by throwing `std::runtime_error`. Only read argument values after `parse_args()` returns successfully; values are unspecified after a failed parse.
+- Parsing errors are reported by throwing `std::runtime_error`. Only read argument values when `parse_args()` returns `true`; values are unspecified after a failed parse.
 - A variadic positional argument must be the final positional argument.
 - Repeating a non-repeatable option is an error. Use `add_repeatable<T>` when multiple values are expected.
 - Pass `true` as the final argument to `add_positional`, `add_positional_variadic`, or `add_repeatable` to place it in the required arguments. Flags are always optional.
 - Required positionals must precede optional and variadic positionals.
 
-## Building Examples
+## Custom Output Streams
+
+Help and version output defaults to `std::cout`. Pass any `std::ostream`
+when output must be captured or redirected:
+
+```cpp
+std::ostringstream output;
+parser.print_help(output);
+
+parser.print_version(std::cerr);
+```
+
+## Building and Testing
+
+ArgumentsParser is a header-only C++11 library.
+
 ```bash
-g++ -std=c++11 -O2 -I. ./tests/example1.cpp -o example1
-./example1
+cmake -S . -B build \
+  -DARGUMENTS_PARSER_BUILD_TESTS=ON \
+  -DARGUMENTS_PARSER_BUILD_EXAMPLES=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+Install the headers and CMake package:
+
+```bash
+cmake --install build --prefix "$HOME/.local"
+```
+
+Consumers can then use:
+
+```cmake
+find_package(ArgumentsParser CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE ArgumentsParser::ArgumentsParser)
+```
+
+The original Makefile remains available:
+
+```bash
+make test
+make examples
 ```
 
 ## Project Structure

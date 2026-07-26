@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <iostream>
 #include <list>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -58,6 +59,37 @@ class File
 // Internal implementation details — not part of the public API
 namespace subcommand_detail
 {
+
+class StreamStateGuard
+{
+  public:
+    explicit StreamStateGuard(std::ios& stream)
+        : stream_(stream), flags_(stream.flags()), precision_(stream.precision()), fill_(stream.fill())
+    {
+    }
+
+    ~StreamStateGuard()
+    {
+        stream_.flags(flags_);
+        stream_.precision(precision_);
+        stream_.fill(fill_);
+    }
+
+  private:
+    StreamStateGuard(const StreamStateGuard&);
+    StreamStateGuard& operator=(const StreamStateGuard&);
+
+    std::ios& stream_;
+    std::ios::fmtflags flags_;
+    std::streamsize precision_;
+    char fill_;
+};
+
+inline int stream_width(std::size_t width)
+{
+    const std::size_t maximum = static_cast<std::size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(width, maximum));
+}
 
 inline bool is_positional_type(ArgType type)
 {
@@ -943,45 +975,70 @@ class SubCommandParser
         return parser_ref;
     }
 
-    void parse_args(int argc, char* argv[])
+    /// Parses command-line arguments.
+    ///
+    /// Returns true when a subcommand is ready to execute. Returns false after
+    /// help or version output has been handled. Invalid arguments throw.
+    [[nodiscard]] bool parse_args(int argc, char* const argv[])
     {
         current_command_.clear();
         requested_subcommand_.clear();
-        ParseResult result;
-        try
+        skip_execution_ = true;
+
+        switch (parse_args_impl(argc, argv))
         {
-            result = parse_args_impl(argc, argv);
+            case ParseResult::Success:
+                skip_execution_ = false;
+                return true;
+
+            case ParseResult::HelpRequested:
+                print_help();
+                return false;
+
+            case ParseResult::VersionRequested:
+                print_version();
+                return false;
+
+            case ParseResult::SubcommandHelpRequested:
+                print_subcommand_help(requested_subcommand_);
+                return false;
         }
-        catch (...)
-        {
-            skip_execution_ = true;
-            if (argc == 2 && argv != nullptr && argv[0] != nullptr && argv[1] != nullptr)
-            {
-                const auto command = commands_.find(argv[1]);
-                if (command != commands_.end() && command->second->parser->has_required())
-                    print_subcommand_help(argv[1]);
-            }
-            throw;
-        }
-        skip_execution_ = result != ParseResult::Success;
-        if (result == ParseResult::HelpRequested)
-            print_help();
-        else if (result == ParseResult::VersionRequested)
-            print_version();
-        else if (result == ParseResult::SubcommandHelpRequested)
-            print_subcommand_help(requested_subcommand_);
+
+        throw std::logic_error("Unhandled parse result");
     }
 
   private:
-    ParseResult parse_args_impl(int argc, char* argv[])
+    static void validate_arguments(int argc, char* const argv[])
     {
         if (argc <= 0 || argv == nullptr || argv[0] == nullptr)
             throw std::runtime_error("Invalid argc/argv passed to parse_args.");
-        for (int i = 0; i < argc; ++i)
+
+        for (int index = 0; index < argc; ++index)
         {
-            if (argv[i] == nullptr)
+            if (argv[index] == nullptr)
                 throw std::runtime_error("Invalid null argument in argv.");
         }
+    }
+
+    static subcommand_detail::Option* find_short_argument(ArgumentOptions& parser, char short_option)
+    {
+        if (parser.short_to_long_.count(short_option) == 0)
+            return nullptr;
+
+        return parser.arguments_.at(parser.short_to_long_.at(short_option)).get();
+    }
+
+    static void assign_value(subcommand_detail::Option& argument, const std::string& value)
+    {
+        if (argument.is_repeatable)
+            argument.append_repeatable(value);
+        else
+            argument.from_string(value);
+    }
+
+    ParseResult parse_args_impl(int argc, char* const argv[])
+    {
+        validate_arguments(argc, argv);
         if (programname_.empty())
             programname_ = argv[0];
         if (argc < 2)
@@ -1047,25 +1104,26 @@ class SubCommandParser
         return cmd->callable(*cmd->parser);
     }
 
-    void print_help() const
+    void print_help(std::ostream& out = std::cout) const
     {
-        std::cout << programname_ << ": " << description_ << "\n";
+        subcommand_detail::StreamStateGuard stream_state(out);
+        out << programname_ << ": " << description_ << "\n";
         if (!version_.empty())
         {
-            std::cout << "Version: " << version_ << "\n";
+            out << "Version: " << version_ << "\n";
         }
-        std::cout << "Usage: " << programname_ << " <command> [options]\n\n";
-        std::cout << "Options:\n";
+        out << "Usage: " << programname_ << " <command> [options]\n\n";
+        out << "Options:\n";
         if (version_enabled_)
         {
             if (version_short_opt_ != '\0')
-                std::cout << "  -" << version_short_opt_ << ", ";
+                out << "  -" << version_short_opt_ << ", ";
             else
-                std::cout << "      ";
-            std::cout << "--" << version_long_opt_ << "    " << version_help_ << "\n";
+                out << "      ";
+            out << "--" << version_long_opt_ << "    " << version_help_ << "\n";
         }
-        std::cout << "  -h, --help    Show help message\n\n";
-        std::cout << "Commands:\n";
+        out << "  -h, --help    Show help message\n\n";
+        out << "Commands:\n";
 
         size_t max_cmd_width = 0;
         for (const auto& name : command_order_)
@@ -1076,21 +1134,22 @@ class SubCommandParser
         for (const auto& name : command_order_)
         {
             const auto& cmd = commands_.at(name);
-            std::cout << "  " << std::setw(max_cmd_width) << std::left << name << "    "
+            out << "  " << std::setw(subcommand_detail::stream_width(max_cmd_width)) << std::left << name << "    "
                       << cmd->parser->get_description() << "\n";
         }
-        std::cout << "\n";
+        out << "\n";
         if (!note_.empty())
         {
-            std::cout << note_ << "\n";
+            out << note_ << "\n";
         }
-        std::cout << "See '" + programname_ + " help <command>' to read about a specific subcommand.\n";
+        out << "See '" + programname_ + " help <command>' to read about a specific subcommand.\n";
     }
 
-    void print_version() const { std::cout << programname_ << " " << version_ << "\n"; }
+    void print_version(std::ostream& out = std::cout) const { out << programname_ << " " << version_ << "\n"; }
 
-    void print_subcommand_help(const std::string& subcmd_name)
+    void print_subcommand_help(const std::string& subcmd_name, std::ostream& out = std::cout)
     {
+        subcommand_detail::StreamStateGuard stream_state(out);
         auto it = commands_.find(subcmd_name);
         if (it == commands_.end())
         {
@@ -1099,26 +1158,26 @@ class SubCommandParser
 
         const auto& cmd = it->second;
         ArgumentOptions& parser = *cmd->parser;
-        std::cout << programname_ << " " << subcmd_name << ": " << parser.get_description() << "\n";
+        out << programname_ << " " << subcmd_name << ": " << parser.get_description() << "\n";
         if (!parser.get_version().empty())
         {
-            std::cout << "Version: " << parser.get_version() << "\n";
+            out << "Version: " << parser.get_version() << "\n";
         }
-        std::cout << "Usage: " << programname_ << " " << subcmd_name << " [options]";
+        out << "Usage: " << programname_ << " " << subcmd_name << " [options]";
         for (const auto& name : parser.positionals_)
         {
             const bool variadic = parser.arguments_.count(name) && parser.arguments_.at(name)->is_variadic;
             const bool required = parser.arguments_.at(name)->required;
-            std::cout << (required ? " <" : " [") << name << (variadic ? "..." : "")
+            out << (required ? " <" : " [") << name << (variadic ? "..." : "")
                       << (required ? ">" : "]");
         }
-        std::cout << "\n\n";
+        out << "\n\n";
 
-        print_argument_sections(parser);
+        print_argument_sections(parser, out);
 
         if (!note_.empty())
         {
-            std::cout << note_ << "\n\n";
+            out << note_ << "\n\n";
         }
     }
 
@@ -1176,7 +1235,7 @@ class SubCommandParser
             throw std::runtime_error("Argument '--" + argument->long_opt + "' was provided more than once.");
     }
 
-    void print_argument_sections(ArgumentOptions& parser)
+    void print_argument_sections(ArgumentOptions& parser, std::ostream& out)
     {
         const auto& arguments = parser.arguments_;
 
@@ -1228,34 +1287,34 @@ class SubCommandParser
                 continue;
             }
 
-            std::cout << section_title << ":\n";
+            out << section_title << ":\n";
             for (const auto& name : display_order)
             {
                 const Option* arg = arguments.at(name).get();
                 if (subcommand_detail::is_positional_type(arg->arg_type) || arg->required != req)
                     continue;
 
-                std::cout << "  ";
+                out << "  ";
                 std::string opt_str;
                 if (arg->short_opt != '\0')
                     opt_str = std::string("-") + arg->short_opt + ", --" + arg->long_opt;
                 else
                     opt_str = std::string("--") + arg->long_opt;
-                std::cout << std::setw(opt_w) << std::left << opt_str << "    ";
+                out << std::setw(subcommand_detail::stream_width(opt_w)) << std::left << opt_str << "    ";
 
                 std::string type_str = arg->label_type();
-                std::cout << std::setw(type_w) << std::left << type_str << "    ";
+                out << std::setw(subcommand_detail::stream_width(type_w)) << std::left << type_str << "    ";
 
                 if (arg->deprecated)
-                    std::cout << "[Deprecated] ";
+                    out << "[Deprecated] ";
 
-                std::cout << arg->help;
+                out << arg->help;
                 if (arg->has_default && arg->arg_type != ArgType::Flag)
-                    std::cout << " (default: " << arg->to_string() << ")";
+                    out << " (default: " << arg->to_string() << ")";
 
-                std::cout << "\n";
+                out << "\n";
             }
-            std::cout << "\n";
+            out << "\n";
         }
 
         if (!parser.positionals_.empty())
@@ -1269,20 +1328,20 @@ class SubCommandParser
                 type_width = std::max(type_width, argument->display_type().length());
             }
 
-            std::cout << "Positional arguments:\n";
+            out << "Positional arguments:\n";
             for (const auto& name : parser.positionals_)
             {
                 const Option* argument = arguments.at(name).get();
                 const std::string display_name = name + (argument->is_variadic ? "..." : "");
-                std::cout << "  " << std::setw(name_width) << std::left << display_name << "    "
-                          << std::setw(type_width) << std::left << argument->display_type() << "    " << argument->help
+                out << "  " << std::setw(subcommand_detail::stream_width(name_width)) << std::left << display_name << "    "
+                          << std::setw(subcommand_detail::stream_width(type_width)) << std::left << argument->display_type() << "    " << argument->help
                           << "\n";
             }
-            std::cout << "\n";
+            out << "\n";
         }
     }
 
-    ParseResult parse_subcommand_args(const std::string& subcmd_name, int argc, char* argv[])
+    ParseResult parse_subcommand_args(const std::string& subcmd_name, int argc, char* const argv[])
     {
         auto& cmd = commands_[subcmd_name];
         ArgumentOptions& parser = *cmd->parser;
@@ -1355,14 +1414,7 @@ class SubCommandParser
                                                      std::string(argv[i + 1]) + "'.");
                         value = argv[++i];
                     }
-                    if (argument->is_repeatable)
-                    {
-                        argument->append_repeatable(value);
-                    }
-                    else
-                    {
-                        argument->from_string(value);
-                    }
+                    assign_value(*argument, value);
                 }
                 argument->was_parsed = true;
             }
@@ -1371,14 +1423,7 @@ class SubCommandParser
                 if (arg.size() > 2)
                 {
                     char first_sopt = arg[1];
-                    Option* first_argument = nullptr;
-                    {
-                        auto sit = parser.short_to_long_.find(first_sopt);
-                        if (sit != parser.short_to_long_.end())
-                        {
-                            first_argument = parser.arguments_.at(sit->second).get();
-                        }
-                    }
+                    Option* first_argument = find_short_argument(parser, first_sopt);
                     if (!first_argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + first_sopt);
 
@@ -1387,14 +1432,7 @@ class SubCommandParser
                     {
                         reject_duplicate(first_argument);
                         std::string value = arg.substr(2);
-                        if (first_argument->is_repeatable)
-                        {
-                            first_argument->append_repeatable(value);
-                        }
-                        else
-                        {
-                            first_argument->from_string(value);
-                        }
+                        assign_value(*first_argument, value);
                         first_argument->was_parsed = true;
                     }
                     else
@@ -1402,14 +1440,7 @@ class SubCommandParser
                         for (size_t j = 1; j < arg.size(); ++j)
                         {
                             char sopt = arg[j];
-                            Option* argument = nullptr;
-                            {
-                                auto sit = parser.short_to_long_.find(sopt);
-                                if (sit != parser.short_to_long_.end())
-                                {
-                                    argument = parser.arguments_.at(sit->second).get();
-                                }
-                            }
+                            Option* argument = find_short_argument(parser, sopt);
                             if (!argument)
                                 throw std::runtime_error(std::string("Unknown short flag: -") + sopt);
                             if (argument->arg_type != ArgType::Flag)
@@ -1427,14 +1458,7 @@ class SubCommandParser
                 else
                 {
                     char sopt = arg[1];
-                    Option* argument = nullptr;
-                    {
-                        auto sit = parser.short_to_long_.find(sopt);
-                        if (sit != parser.short_to_long_.end())
-                        {
-                            argument = parser.arguments_.at(sit->second).get();
-                        }
-                    }
+                    Option* argument = find_short_argument(parser, sopt);
                     if (!argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + sopt);
 
@@ -1458,14 +1482,7 @@ class SubCommandParser
                             throw std::runtime_error(std::string("Argument '-") + sopt +
                                                      "' requires a value before '" + argv[i + 1] + "'.");
                         std::string value = argv[++i];
-                        if (argument->is_repeatable)
-                        {
-                            argument->append_repeatable(value);
-                        }
-                        else
-                        {
-                            argument->from_string(value);
-                        }
+                        assign_value(*argument, value);
                         argument->was_parsed = true;
                     }
                 }

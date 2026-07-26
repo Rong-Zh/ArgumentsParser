@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <iostream>
 #include <list>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -57,6 +58,37 @@ class File
 
 namespace detail
 {
+
+class StreamStateGuard
+{
+  public:
+    explicit StreamStateGuard(std::ios& stream)
+        : stream_(stream), flags_(stream.flags()), precision_(stream.precision()), fill_(stream.fill())
+    {
+    }
+
+    ~StreamStateGuard()
+    {
+        stream_.flags(flags_);
+        stream_.precision(precision_);
+        stream_.fill(fill_);
+    }
+
+  private:
+    StreamStateGuard(const StreamStateGuard&);
+    StreamStateGuard& operator=(const StreamStateGuard&);
+
+    std::ios& stream_;
+    std::ios::fmtflags flags_;
+    std::streamsize precision_;
+    char fill_;
+};
+
+inline int stream_width(std::size_t width)
+{
+    const std::size_t maximum = static_cast<std::size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(width, maximum));
+}
 
 inline bool is_positional_type(ArgType type)
 {
@@ -751,35 +783,61 @@ class ArgumentParser
         return get<T>(std::string(1, short_opt));
     }
 
-    void parse_args(int argc, char* argv[])
+    /// Parses command-line arguments.
+    ///
+    /// Returns true when normal parsing succeeds. Returns false after help or
+    /// version output has been handled. Invalid arguments throw an exception.
+    [[nodiscard]] bool parse_args(int argc, char* const argv[])
     {
-        ParseResult result;
-        try
+        switch (parse_args_impl(argc, argv))
         {
-            result = parse_args_impl(argc, argv);
-        }
-        catch (...)
-        {
-            if (argc == 1 && argv != nullptr && argv[0] != nullptr && has_required())
+            case ParseResult::Success:
+                return true;
+
+            case ParseResult::HelpRequested:
                 print_help();
-            throw;
+                return false;
+
+            case ParseResult::VersionRequested:
+                print_version();
+                return false;
         }
-        if (result == ParseResult::HelpRequested)
-            print_help();
-        else if (result == ParseResult::VersionRequested)
-            print_version();
+
+        throw std::logic_error("Unhandled parse result");
     }
 
   private:
-    ParseResult parse_args_impl(int argc, char* argv[])
+    static void validate_arguments(int argc, char* const argv[])
     {
         if (argc <= 0 || argv == nullptr || argv[0] == nullptr)
             throw std::runtime_error("Invalid argc/argv passed to parse_args.");
-        for (int i = 0; i < argc; ++i)
+
+        for (int index = 0; index < argc; ++index)
         {
-            if (argv[i] == nullptr)
+            if (argv[index] == nullptr)
                 throw std::runtime_error("Invalid null argument in argv.");
         }
+    }
+
+    ArgumentBase* find_short_argument(char short_option) const
+    {
+        if (short_to_long_.count(short_option) == 0)
+            return nullptr;
+
+        return arguments_.at(short_to_long_.at(short_option)).get();
+    }
+
+    static void assign_value(ArgumentBase& argument, const std::string& value)
+    {
+        if (argument.is_repeatable)
+            argument.append_repeatable(value);
+        else
+            argument.from_string(value);
+    }
+
+    ParseResult parse_args_impl(int argc, char* const argv[])
+    {
+        validate_arguments(argc, argv);
         if (programname_.empty())
             programname_ = argv[0];
 
@@ -840,12 +898,14 @@ class ArgumentParser
                 {
                     if (has_inline_value)
                         throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
+                    argument->was_parsed = true;
                     return ParseResult::HelpRequested;
                 }
                 if (argument == version_arg)
                 {
                     if (has_inline_value)
                         throw std::runtime_error("Flag argument --" + opt_name + " does not accept a value");
+                    argument->was_parsed = true;
                     return ParseResult::VersionRequested;
                 }
 
@@ -869,14 +929,7 @@ class ArgumentParser
                                                      std::string(argv[i + 1]) + "'.");
                         value = argv[++i];
                     }
-                    if (argument->is_repeatable)
-                    {
-                        argument->append_repeatable(value);
-                    }
-                    else
-                    {
-                        argument->from_string(value);
-                    }
+                    assign_value(*argument, value);
                 }
                 argument->was_parsed = true;
             }
@@ -886,12 +939,7 @@ class ArgumentParser
                 if (arg.size() > 2)
                 {
                     char first_opt = arg[1];
-                    ArgumentBase* first_argument = nullptr;
-                    {
-                        auto sit = short_to_long_.find(first_opt);
-                        if (sit != short_to_long_.end())
-                            first_argument = arguments_.at(sit->second).get();
-                    }
+                    ArgumentBase* first_argument = find_short_argument(first_opt);
 
                     if (!first_argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + first_opt);
@@ -901,14 +949,7 @@ class ArgumentParser
                     {
                         reject_duplicate(first_argument);
                         std::string value = arg.substr(2);
-                        if (first_argument->is_repeatable)
-                        {
-                            first_argument->append_repeatable(value);
-                        }
-                        else
-                        {
-                            first_argument->from_string(value);
-                        }
+                        assign_value(*first_argument, value);
                         first_argument->was_parsed = true;
                     }
                     else
@@ -916,12 +957,7 @@ class ArgumentParser
                         for (size_t j = 1; j < arg.size(); ++j)
                         {
                             char sopt = arg[j];
-                            ArgumentBase* argument = nullptr;
-                            {
-                                auto sit = short_to_long_.find(sopt);
-                                if (sit != short_to_long_.end())
-                                    argument = arguments_.at(sit->second).get();
-                            }
+                            ArgumentBase* argument = find_short_argument(sopt);
                             if (!argument)
                                 throw std::runtime_error(std::string("Unknown short flag: -") + sopt);
                             if (argument->arg_type != ArgType::Flag)
@@ -929,10 +965,12 @@ class ArgumentParser
                             reject_duplicate(argument);
                             if (argument == help_arg)
                             {
+                                argument->was_parsed = true;
                                 return ParseResult::HelpRequested;
                             }
                             if (argument == version_arg)
                             {
+                                argument->was_parsed = true;
                                 return ParseResult::VersionRequested;
                             }
                             argument->from_string("true");
@@ -943,12 +981,7 @@ class ArgumentParser
                 else
                 {
                     char sopt = arg[1];
-                    ArgumentBase* argument = nullptr;
-                    {
-                        auto sit = short_to_long_.find(sopt);
-                        if (sit != short_to_long_.end())
-                            argument = arguments_.at(sit->second).get();
-                    }
+                    ArgumentBase* argument = find_short_argument(sopt);
                     if (!argument)
                         throw std::runtime_error(std::string("Unknown argument: -") + sopt);
 
@@ -958,10 +991,12 @@ class ArgumentParser
                     {
                         if (argument == help_arg)
                         {
+                            argument->was_parsed = true;
                             return ParseResult::HelpRequested;
                         }
                         if (argument == version_arg)
                         {
+                            argument->was_parsed = true;
                             return ParseResult::VersionRequested;
                         }
                         argument->from_string("true");
@@ -976,14 +1011,7 @@ class ArgumentParser
                             throw std::runtime_error(std::string("Argument '-") + sopt +
                                                      "' requires a value before '" + argv[i + 1] + "'.");
                         std::string value = argv[++i];
-                        if (argument->is_repeatable)
-                        {
-                            argument->append_repeatable(value);
-                        }
-                        else
-                        {
-                            argument->from_string(value);
-                        }
+                        assign_value(*argument, value);
                         argument->was_parsed = true;
                     }
                 }
@@ -1031,28 +1059,29 @@ class ArgumentParser
     }
 
   public:
-    void print_help()
+    void print_help(std::ostream& out = std::cout) const
     {
-        std::cout << programname_ << ": " << description_ << "\n";
+        detail::StreamStateGuard stream_state(out);
+        out << programname_ << ": " << description_ << "\n";
         if (!version_.empty())
-            std::cout << "Version: " << version_ << "\n";
-        std::cout << "Usage: " << programname_ << " [options]";
+            out << "Version: " << version_ << "\n";
+        out << "Usage: " << programname_ << " [options]";
         for (const auto& name : positionals_)
         {
             const bool variadic = arguments_.count(name) && arguments_.at(name)->is_variadic;
             const bool required = arguments_.at(name)->required;
-            std::cout << (required ? " <" : " [") << name << (variadic ? "..." : "")
+            out << (required ? " <" : " [") << name << (variadic ? "..." : "")
                       << (required ? ">" : "]");
         }
-        std::cout << "\n\n";
-        print_help_sections();
+        out << "\n\n";
+        print_help_sections(out);
         if (!note_.empty())
         {
-            std::cout << note_ << "\n\n";
+            out << note_ << "\n\n";
         }
     }
 
-    void print_version() const { std::cout << programname_ << " " << version_ << "\n"; }
+    void print_version(std::ostream& out = std::cout) const { out << programname_ << " " << version_ << "\n"; }
 
     bool exists(const std::string& name) const { return arguments_.find(name) != arguments_.end(); }
 
@@ -1166,7 +1195,7 @@ class ArgumentParser
     }
 
     // Single-pass help printer: emits Required section then Optional section
-    void print_help_sections()
+    void print_help_sections(std::ostream& out) const
     {
         // Build display order once (move help arg to end)
         auto display_order = order_;
@@ -1212,33 +1241,33 @@ class ArgumentParser
                 continue;
             }
 
-            std::cout << section_title << ":\n";
+            out << section_title << ":\n";
             for (const auto& name : display_order)
             {
                 const ArgumentBase* arg = arguments_.at(name).get();
                 if (detail::is_positional_type(arg->arg_type) || arg->required != show_required)
                     continue;
 
-                std::cout << "  ";
+                out << "  ";
                 if (arg->short_opt != '\0')
-                    std::cout << "-" << arg->short_opt << ", ";
+                    out << "-" << arg->short_opt << ", ";
                 else
-                    std::cout << "    ";
+                    out << "    ";
 
-                std::cout << "--" << std::setw(opt_w) << std::left << arg->long_opt << "    ";
-                std::cout << std::setw(type_w) << std::left << arg->label_type() << "    ";
+                out << "--" << std::setw(detail::stream_width(opt_w)) << std::left << arg->long_opt << "    ";
+                out << std::setw(detail::stream_width(type_w)) << std::left << arg->label_type() << "    ";
 
                 if (arg->deprecated)
-                    std::cout << "[Deprecated] ";
+                    out << "[Deprecated] ";
 
-                std::cout << arg->help;
+                out << arg->help;
 
                 if (arg->has_default && arg->arg_type != ArgType::Flag)
-                    std::cout << " (default: " << arg->to_string() << ")";
+                    out << " (default: " << arg->to_string() << ")";
 
-                std::cout << "\n";
+                out << "\n";
             }
-            std::cout << "\n";
+            out << "\n";
         }
 
         if (!positionals_.empty())
@@ -1252,16 +1281,16 @@ class ArgumentParser
                 type_width = std::max(type_width, argument->display_type().length());
             }
 
-            std::cout << "Positional arguments:\n";
+            out << "Positional arguments:\n";
             for (const auto& name : positionals_)
             {
                 const ArgumentBase* argument = arguments_.at(name).get();
                 const std::string display_name = name + (argument->is_variadic ? "..." : "");
-                std::cout << "  " << std::setw(name_width) << std::left << display_name << "    "
-                          << std::setw(type_width) << std::left << argument->display_type() << "    " << argument->help
+                out << "  " << std::setw(detail::stream_width(name_width)) << std::left << display_name << "    "
+                          << std::setw(detail::stream_width(type_width)) << std::left << argument->display_type() << "    " << argument->help
                           << "\n";
             }
-            std::cout << "\n";
+            out << "\n";
         }
     }
 

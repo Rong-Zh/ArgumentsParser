@@ -70,6 +70,7 @@ int main(int argc, char *argv[])
     ann_parser.add_repeatable<std::string>('f', "field", "Database field spec (repeatable): dbname:type[:prefix[:col1,col2]]");
     ann_parser.add_help('h', "help", "Show help message");
 
-    cmd.parse_args(argc, argv);
+    if (!cmd.parse_args(argc, argv))
+        return 0;
     return cmd.execute();
 }

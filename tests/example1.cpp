@@ -62,7 +62,8 @@ int main(int argc, char *argv[])
 
     parser.footnote("Maintainer: RongZh, Email: xxxxxxxxxx@google.com");
 
-    parser.parse_args(argc, argv);
+    if (!parser.parse_args(argc, argv))
+        return 0;
 
     // Retrieve all argument values
     int age = parser.get<int>("age");
